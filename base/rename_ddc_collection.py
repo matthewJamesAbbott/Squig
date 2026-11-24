@@ -507,8 +507,11 @@ def main():
 
     args = parser.parse_args()
 
-    source_root = Path(args.source) if args.source else SOURCE_ROOT
-    dest_root = Path(args.dest) if args.dest else DEST_ROOT
+    # resolve(): rewritten image_path values are built from dest_root and
+    # must be absolute (the reader/validator resolve stored paths against
+    # CWD; relative CLI args would poison every parquet that gets copied).
+    source_root = (Path(args.source) if args.source else SOURCE_ROOT).resolve()
+    dest_root = (Path(args.dest) if args.dest else DEST_ROOT).resolve()
 
     dry_run = not args.execute
     if args.dry_run:
@@ -519,8 +522,11 @@ def main():
         sys.exit(1)
 
     if not dest_root.is_dir():
-        print(f"ERROR: Destination directory does not exist: {dest_root}")
-        sys.exit(1)
+        if dry_run:
+            print(f"NOTE: Destination does not exist yet, will be created on execute: {dest_root}")
+        else:
+            dest_root.mkdir(parents=True)
+            print(f"Created destination: {dest_root}")
 
     print(f"Source : {source_root}")
     print(f"Dest   : {dest_root}")

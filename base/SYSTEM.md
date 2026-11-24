@@ -164,7 +164,7 @@ parsed from `content` (not `reasoning`).
 | **Reader** | <http://localhost:8071> | Browse / read / ask / search UI |
 | **Machine API** | <http://localhost:8071/v1> | Stable versioned endpoints: `/v1/search`, `/v1/ask`, `/v1/chat` (agent), `/v1/books` (catalog), `/v1/page/{book_id}/{n}`, `/v1/chunk/{id}`, `/v1/source/{id}`, `/v1/status`, `/v1/index/*`, `/v1/hits*`, `POST /v1/rescan` |
 | **OWUI bridge** | <http://localhost:8072> | `ddc-library` in the Open WebUI model picker (`/v1/models`, `/v1/chat/completions`) + the 13 MCP tools over streamable HTTP (`POST /mcp` and `POST /`); from inside the OWUI container use `http://172.17.0.1:8072` |
-| **Open WebUI** | <http://localhost:3000> | Docker container; pick the `ddc-library` model or toggle the 13 `ddc` tools in any chat (registration: `scripts/owui_register.py`) |
+| **Open WebUI** | <http://localhost:3000> | Docker container; pick the `ddc-library` model or toggle the 13 `ddc` tools in any chat (registration: `owui_register.py`) |
 | Qdrant | <http://localhost:6333> | `ddc-books`: 1024-d cosine + BM25 text index |
 | Ollama (GPU index worker) | <http://localhost:11434> | bge-m3 embeddings for the indexer, on the P2000 |
 | Ollama (CPU query worker) | <http://localhost:11435> | keeps interactive search ~0.2 s while the indexer runs (falls back to the GPU worker; `keyword` mode needs neither) |
@@ -260,19 +260,35 @@ free V100 (`--device cuda:0` after unloading the squig LLM, or the incoming
 - **Library**: 650 book parquets, ~23 GB, in the DDC tree; Qdrant `ddc-books`
   = **186,938 points** (650/650 books indexed). Reader/dashboard/MCP/OWUI
   bridge all up.
-- **Full-format batch test** (`/tmp/opencode/batchtest`, one real book per
-  format, 17 books): 14/17 ingested and verified through stage 1
-  (txt, rtf, html, htm, chm, docx, doc, odt, mht, fb2, epub, lit, mobi,
-  azw3 — parquets + original siblings + correct word counts). The 3
-  marker-OCR books (`.djvu` 75 pp, `.cbz` 121 pp, `.cbr` 4 pp) were converted
-  to PDF successfully and are finishing OCR on the P2000 — first run hit the
-  device-ordering OOM above.
+- **Full-format batch test: 17/17 end-to-end**
+  (`/tmp/opencode/batchtest`, one real book per format, all five stages):
+  - Stage 1: every format ingested. The 3 marker-OCR books (`.djvu` 75 pp,
+    `.cbz` 121 pp, `.cbr` 2 pp) produced real OCR text + full-page JPEGs on
+    the P2000 (~42 min for the 121-pp CBZ).
+  - Stage 2: 17/17 enriched (squigFast; see fixes below).
+  - Stage 3: classified into a throwaway DDC tree (`batchtest/tree`,
+    17 books, 14 distinct DDC codes).
+  - Stage 4: validator **17/17 clean, 0 duplicate identities**.
+  - Stage 5: throwaway tree indexed into `ddc-books`, then its 17 book_ids
+    deleted again to keep the production index clean.
+- **Batch-driven fixes** (all in `base/`):
+  - `ocr.py`: marker `merge_lines` capture (real OCR text from the
+    post-processed pipeline instead of the empty embedded layer) +
+    full-page JPEGs kept for books whose original isn't a renderable PDF.
+  - `booktext.py`: MOBI/Kindle magic check for 64-byte-prefixed files;
+    utf-16 decoding now trusted only on a BOM / NUL-dense bytes (BOM-less
+    UTF-16LE ASCII is *valid* utf-8 — it used to turn Latin-1 `.txt` into
+    CJK mojibake).
+  - `enrich_ddc_collection.py`: JSON-only system message + balanced-brace
+    JSON extractor + temperature ladder across retries (temp 0 put
+    squigFast into a degenerate "We need answer…" loop on noisy samples).
+  - `rename_ddc_collection.py`: source/dest resolved to absolute paths
+    (a relative `--dest` poisoned the rewritten `image_path` values);
+    missing dest root auto-created on execute.
+  - `converters.py`: cbr `quick_page_count` via 7z separator lines.
 - **Known tree state**: ~520 pre-existing books reference page images in
   deleted staging dirs (their text/parquet is fine; re-OCR repairs images);
   5 pre-existing duplicate identities (validator lists them).
-- **Stages 2–4 on the batch** (enrich → classify into a throwaway tree →
-  validate) are the remaining end-to-end step for the new formats; stage 5
-  then indexes the survivors. Nothing blocks this except LLM time.
 
 ## 10. File map
 

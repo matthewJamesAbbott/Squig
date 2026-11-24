@@ -205,18 +205,31 @@ def _looks_like_text(sample: bytes) -> bool:
 
 
 # ── Text reading ──────────────────────────────────────────────────────────────
+def _utf16_plausible(raw: bytes) -> bool:
+    """utf-16 is only trustworthy with a BOM or NUL-heavy bytes: decoding
+    BOM-less ASCII/Latin-1 as utf-16LE almost always 'succeeds' and yields
+    CJK mojibake ('Su' 0x53 0x75 -> U+7553)."""
+    return raw[:2] in (b"\xff\xfe", b"\xfe\xff") or raw.count(0) > len(raw) // 8
+
+
 def read_text(path: Path) -> str:
     """Read a .txt (or any text file) with encoding fallbacks.
 
-    Order: utf-8-sig (handles the BOM most exports carry) -> utf-16
-    (some Windows exports) -> latin-1 (never fails)."""
+    utf-16 comes FIRST when its fingerprint is present (BOM or NUL-dense
+    bytes): BOM-less UTF-16LE ASCII is *valid utf-8*, and decodes as
+    ASCII chars sprinkled with NULs. Then utf-8-sig (handles the BOM most
+    exports carry) -> latin-1 (never fails)."""
     raw = Path(path).read_bytes()
-    for enc in ("utf-8-sig", "utf-16", "latin-1"):
+    if _utf16_plausible(raw):
         try:
-            return raw.decode(enc)
+            return raw.decode("utf-16")
         except (UnicodeDecodeError, UnicodeError):
-            continue
-    return raw.decode("latin-1", errors="replace")
+            pass
+    try:
+        return raw.decode("utf-8-sig")
+    except (UnicodeDecodeError, UnicodeError):
+        pass
+    return raw.decode("latin-1")
 
 
 # ── TXT -> blocks ─────────────────────────────────────────────────────────────
@@ -528,7 +541,9 @@ def _decode_html(raw: bytes) -> str:
     encs = []
     if m:
         encs.append(m.group(1).decode("ascii", "ignore"))
-    encs += ["utf-8-sig", "utf-16", "latin-1"]
+    if _utf16_plausible(raw):
+        encs.append("utf-16")  # before utf-8: BOM-less UTF-16LE ASCII is valid utf-8
+    encs += ["utf-8-sig", "latin-1"]
     for enc in encs:
         try:
             return raw.decode(enc)

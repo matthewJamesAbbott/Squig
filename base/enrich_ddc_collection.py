@@ -139,14 +139,50 @@ def combine_sample_text(df, pages=CONTEXT_PAGES, max_words=MAX_WORDS):
     return " ".join(words[:max_words])
 
 
+def _extract_json(text):
+    """Parse the first *balanced* JSON object in `text`, tolerating prose
+    before it or after it (and even a second object appended after).
+    Returns the dict, or raises ValueError."""
+    start = text.find("{")
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start:i + 1])
+        start = text.find("{", start + 1)
+    raise ValueError("no JSON object found")
+
+
 def call_llm(client, model, filename, text_sample):
     prompt = PROMPT.format(filename=filename, text=text_sample)
     for attempt in range(MAX_RETRIES):
         try:
+            # temperature 0 is deterministic: if it yields non-JSON
+            # chatter, retry with sampling to escape the degenerate path.
             resp = client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
+                messages=[
+                    {"role": "system",
+                     "content": "You extract book metadata. Respond with "
+                                "ONLY one JSON object - no prose, no "
+                                "markdown, no extra text."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=(0.0, 0.3, 0.7)[attempt],
             )
             msg = resp.choices[0].message
             # reasoning models carry an extra `reasoning` field; the answer
@@ -156,11 +192,9 @@ def call_llm(client, model, filename, text_sample):
                 content = (getattr(msg, "reasoning", None) or "").strip()
 
             try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                start, end = content.find("{"), content.rfind("}") + 1
-                if start != -1 and end > start:
-                    return json.loads(content[start:end])
+                return _extract_json(content)
+            except (ValueError, json.JSONDecodeError):
+                pass
             print(f"  WARNING: no JSON in response: {content[:150]}...")
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY * (attempt + 1))
