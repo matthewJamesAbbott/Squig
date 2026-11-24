@@ -1,0 +1,275 @@
+#!/home/matt/miniconda3/envs/marker_env/bin/python
+"""ddq — command-line client for the DDC library (/v1 API on the viewer).
+
+Both you and the agents use the same tool:
+
+    ddq status
+    ddq search "mildew in grape vines"            # hybrid (default)
+    ddq search "Table 8" --mode keyword           # instant, no GPU needed
+    ddq search "wine flavour" --ddc 300_Social_Sciences -k 5 --text
+    ddq ask "How does fermentation affect wine flavour?"     # one-shot: one search, one answer
+    ddq chat "How does fermentation affect wine flavour?"    # agent: reasons between searches
+    ddq chunk 2464535952654574015                 # one chunk by point id
+    ddq source 197b485b0d7582f0                   # book metadata + coverage
+    ddq hits --layer agent                         # the agent's own off-time research
+    ddq hits --q mildew --limit 10                 # what was searched for "mildew"
+
+All commands take --json for machine-readable output.
+READER_URL overrides the base URL (default http://localhost:8071).
+"""
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+BASE = os.environ.get("READER_URL", "http://localhost:8071")
+
+
+def call(method: str, path: str, body=None):
+    req = urllib.request.Request(
+        BASE + path,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json"}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read()).get("error", "")
+        except Exception:
+            err = e.reason
+        sys.exit(f"error: {e.code} {err}")
+
+
+def cov_line(cov: dict) -> str:
+    return (f"coverage: {cov['books_indexed']}/{cov['books_total']} books · "
+            f"{cov['chunks_indexed']:,} chunks")
+
+
+def print_search(j: dict, as_json: bool, show_text: bool) -> None:
+    if as_json:
+        print(json.dumps(j, indent=2))
+        return
+    if not j["results"]:
+        print("no results")
+    for i, r in enumerate(j["results"], 1):
+        loc = r.get("locator") or {}
+        where = loc.get("path") or "(local path not found yet)"
+        print(f"{i}. {r['doc_title']}  p.{r['page_num']}   (score {r['score']})")
+        print(f"   {where}")
+        print(f"   {r['snippet'][:240]}")
+        if show_text and r.get("text"):
+            print(f"   ---\n   {r['text']}\n   ---")
+        print()
+    ms = j.get("ms", {})
+    print(f"[{j['mode']}] embed {ms.get('embed', 0)}ms · qdrant {ms.get('qdrant', 0)}ms · "
+          f"total {ms.get('total', 0)}ms · id={j['results'][0]['id'] if j['results'] else '-'}")
+    if j.get("coverage"):
+        print(cov_line(j["coverage"]))
+
+
+def print_answer(j: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(j, indent=2))
+        return
+    print(j["answer"])
+    print()
+    if j.get("sources"):
+        print("sources:")
+        for s in j["sources"]:
+            print(f"  [{s['n']}] {s['title']}  p.{s['page']}   {s.get('path') or ''}")
+    print(f"[retrieval {j['retrieval_ms']}ms · generation {j['gen_ms']}ms · {j.get('model', '')}]")
+    if j.get("coverage"):
+        print(cov_line(j["coverage"]))
+
+
+def _step_line(s: dict) -> str:
+    a = s.get("args") or {}
+    bits = []
+    if a.get("q"):
+        bits.append(f'"{a["q"]}"')
+    if a.get("mode") and a["mode"] != "hybrid":
+        bits.append(a["mode"])
+    if a.get("ddc"):
+        bits.append("ddc:" + a["ddc"])
+    if a.get("book_id"):
+        bits.append("book:" + a["book_id"])
+    if a.get("point_id") is not None:
+        bits.append("#" + str(a["point_id"]))
+    return (f"  {s.get('i', '?')}. {s.get('tool', '?')} {' '.join(bits)} → "
+            f"{s.get('summary', '')} ({s.get('ms', 0)}ms)")
+
+
+def print_chat(j: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(j, indent=2))
+        return
+    steps = j.get("steps") or []
+    if steps:
+        print("reasoning:")
+        for s in steps:
+            print(_step_line(s))
+            if s.get("note"):
+                print(f"      ↳ {s['note']}")
+        print()
+    print(j["answer"])
+    print()
+    if j.get("sources"):
+        print("sources:")
+        for s in j["sources"]:
+            print(f"  [{s['n']}] {s['title']}  p.{s['page']}   {s.get('path') or ''}")
+    print(f"[{j.get('iterations', '?')} LLM turns · {j['gen_ms']}ms · {j.get('model', '')}]")
+    if j.get("coverage"):
+        print(cov_line(j["coverage"]))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="ddq", description=__doc__.splitlines()[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", help="health + index coverage")
+
+    sp = sub.add_parser("search", help="hybrid/dense/keyword search")
+    sp.add_argument("q")
+    sp.add_argument("-k", type=int, default=10)
+    sp.add_argument("--mode", choices=["hybrid", "dense", "keyword"], default="hybrid")
+    sp.add_argument("--ddc", help="scope to a top DDC section (e.g. 500_Science)")
+    sp.add_argument("--book-id", dest="book_id")
+    sp.add_argument("--text", action="store_true", help="include full chunk text")
+    sp.add_argument("--json", action="store_true")
+
+    ap2 = sub.add_parser("ask", help="one-shot RAG answer with citations (one search)")
+    ap2.add_argument("q")
+    ap2.add_argument("--ddc")
+    ap2.add_argument("-k", type=int, default=12)
+    ap2.add_argument("--json", action="store_true")
+
+    ap3 = sub.add_parser("chat", help="agent answer: reasons between searches")
+    ap3.add_argument("q")
+    ap3.add_argument("--ddc")
+    ap3.add_argument("--quick", action="store_true",
+                     help="one-shot RAG instead of the agent loop")
+    ap3.add_argument("--json", action="store_true")
+
+    cp = sub.add_parser("chunk", help="one chunk by Qdrant point id")
+    cp.add_argument("id", type=int)
+    cp.add_argument("--json", action="store_true")
+
+    sp2 = sub.add_parser("source", help="source (book) metadata by book_id")
+    sp2.add_argument("book_id")
+    sp2.add_argument("--json", action="store_true")
+
+    hp = sub.add_parser("hits", help="query the MySQL research log (two layers)")
+    hp.add_argument("--layer", choices=["user", "agent"],
+                    help="user=your work, agent=its own research (default: both)")
+    hp.add_argument("--q", help="substring to match inside recorded queries")
+    hp.add_argument("--book", help="only hits that touched this book_id")
+    hp.add_argument("--ddc", help="substring to match inside DDC scopes")
+    hp.add_argument("--session", help="exact session id")
+    hp.add_argument("-k", "--limit", type=int, default=20)
+    hp.add_argument("--json", action="store_true")
+
+    a = ap.parse_args()
+
+    if a.cmd == "status":
+        print(json.dumps(call("GET", "/v1/status"), indent=2))
+    elif a.cmd == "search":
+        filters = {}
+        if a.ddc:
+            filters["ddc_coarse"] = a.ddc
+        if a.book_id:
+            filters["book_id"] = a.book_id
+        j = call("POST", "/v1/search",
+                 {"q": a.q, "k": a.k, "mode": a.mode, "filters": filters,
+                  "fields": ["text"] if a.text else []})
+        print_search(j, a.json, a.text)
+    elif a.cmd == "ask":
+        j = call("POST", "/v1/ask", {"q": a.q, "ddc": a.ddc or "", "k": a.k})
+        print_answer(j, a.json)
+    elif a.cmd == "chat":
+        if a.quick:
+            j = call("POST", "/v1/ask", {"q": a.q, "ddc": a.ddc or ""})
+            print_answer(j, a.json)
+        else:
+            j = call("POST", "/v1/chat", {"q": a.q, "ddc": a.ddc or ""})
+            print_chat(j, a.json)
+    elif a.cmd == "chunk":
+        j = call("GET", f"/v1/chunk/{a.id}")
+        if a.json:
+            print(json.dumps(j, indent=2))
+        else:
+            print(f"{j['doc_title']}  p.{j['page_num']}   id={j['id']}")
+            print(f"locator: {j['locator']}")
+            print()
+            print(j["text"])
+    elif a.cmd == "source":
+        j = call("GET", f"/v1/source/{a.book_id}")
+        if a.json:
+            print(json.dumps(j, indent=2))
+        else:
+            print(f"{j['title']}  ({j.get('authors', '')})")
+            print(f"  ddc {j.get('ddc', '')} · {j.get('pages', '?')} pages · "
+                  f"pdf {'yes' if j.get('has_pdf') else 'no'}")
+            print(f"  path: {j.get('path', '?')}")
+            print(f"  chunks_indexed: {j.get('chunks_indexed')}")
+    elif a.cmd == "hits":
+        import urllib.parse
+        params = {"limit": a.limit}
+        for k, v in (("layer", a.layer), ("q", a.q), ("book", a.book),
+                     ("ddc", a.ddc), ("session", a.session)):
+            if v:
+                params[k] = v
+        j = call("GET", "/v1/hits?" + urllib.parse.urlencode(params))
+        if a.json:
+            print(json.dumps(j, indent=2))
+        else:
+            layers = j.get("layers", {})
+            print(f"total {j['total']} hit(s) · layers "
+                  f"{ {k: layers.get(k, 0) for k in ('user', 'agent')} }")
+            if not j["hits"]:
+                any_hits = any((j.get("layers") or {}).values())
+                msg = ("(no hits match that filter)" if any_hits else
+                       "(log is empty — searches/asks fill it automatically, "
+                       "and log_hit / POST /v1/hits record explicit hits)")
+                print(msg)
+            for h in j["hits"]:
+                head = (f"#{h['id']} {h['ts'][:19]} [{h['layer']}] "
+                        f"{h.get('tool') or '?'}")
+                if h.get("query"):
+                    head += f' "{h["query"]}"'
+                if h.get("n_results") is not None:
+                    head += f" · {h['n_results']} results"
+                if h.get("page_start") is not None:
+                    pages = (f"pp.{h['page_start']}"
+                             if h.get("page_end") in (None, h["page_start"])
+                             else f"pp.{h['page_start']}-{h['page_end']}")
+                    head += f" · {pages}"
+                head += f" · {h.get('status') or 'found'}"
+                print(head)
+                if h.get("ddc"):
+                    print(f"   ddc: {h['ddc']}")
+                if h.get("topic"):
+                    print(f"   topic: {h['topic']}")
+                if h.get("cross_refs"):
+                    refs = []
+                    for r in h["cross_refs"]:
+                        bits = [f"{r.get('ddc') or r.get('book_id') or '?'}"]
+                        if r.get("page") is not None:
+                            bits.append(f"p.{r['page']}")
+                        if r.get("label"):
+                            bits.append(f"({r['label']})")
+                        refs.append(" ".join(bits))
+                    print(f"   cross_refs: {'; '.join(refs)}")
+                if h.get("result_summary"):
+                    print(f"   {h['result_summary']}")
+                if h.get("note"):
+                    print(f"   note: {h['note']}")
+                if h.get("answer"):
+                    print(f"   answer: {h['answer']}")
+
+
+if __name__ == "__main__":
+    main()

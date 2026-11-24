@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Local runtime state (regenerated at runtime)
+*.log
+*.pid
+*.jsonl
+base/gui/config.json
+base/gui/tasks.json
+base/gui/logs/
+base/reader/cache/

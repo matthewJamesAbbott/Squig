@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDC Book Reader</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b23; --panel2: #1c2330; --border: #2a3342;
+    --text: #d7dee8; --dim: #8b98ab; --accent: #4da3ff; --ok: #3fb96f;
+    --warn: #e5a34b; --err: #e05b5b;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  button { font: inherit; color: var(--text); background: var(--panel2);
+           border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px;
+           cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { font: inherit; color: var(--text); background: var(--panel2);
+                  border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px; }
+  header.top { display: flex; align-items: center; gap: 14px; padding: 11px 18px;
+               background: var(--panel); border-bottom: 1px solid var(--border);
+               position: sticky; top: 0; z-index: 20; flex-wrap: wrap; }
+  header.top h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header.top .sub { color: var(--dim); font-size: 12px; }
+  .gsearch { position: relative; flex: 1 1 260px; max-width: 480px; }
+  .gsearch input { width: 100%; }
+  .drop { position: absolute; top: 105%; left: 0; right: 0; background: var(--panel2);
+          border: 1px solid var(--border); border-radius: 8px; max-height: 380px;
+          overflow-y: auto; z-index: 40; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .drop .item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .drop .item:last-child { border-bottom: 0; }
+  .drop .item:hover { background: #232c3b; }
+  .drop .item .t { font-weight: 600; }
+  .drop .item .m { color: var(--dim); font-size: 11.5px; margin-top: 1px; }
+  main { padding: 16px 18px 40px; }
+  .crumbs { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+            color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+  .crumbs a { cursor: pointer; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 12px 14px; cursor: pointer; transition: border-color .15s; }
+  .tile:hover { border-color: var(--accent); }
+  .tile .t { font-weight: 650; font-size: 13.5px; display: -webkit-box;
+             -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+             min-height: 2.6em; }
+  .tile .m { color: var(--dim); font-size: 11.5px; margin-top: 5px; display: flex;
+             gap: 6px; flex-wrap: wrap; align-items: center; }
+  .badge { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px;
+           padding: 1px 6px; font-size: 10.5px; color: var(--dim); }
+  .badge.pdf { color: var(--ok); border-color: rgba(63,185,111,.4); }
+  .badge.ddc { color: var(--accent); border-color: rgba(77,163,255,.4); }
+  .sec-h { font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase;
+           color: var(--dim); margin: 22px 0 10px; }
+  .loading { color: var(--dim); padding: 40px; text-align: center; }
+  .gsearch select { padding: 6px 4px; max-width: 96px; flex: none; }
+  .gsearch input { width: auto; flex: 1 1 180px; }
+  .drop .snip { color: var(--dim); font-size: 12px; margin-top: 3px; line-height: 1.45;
+                display: -webkit-box; -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical; overflow: hidden; }
+  .drop .pgref { color: var(--accent); font-weight: 700; font-size: 11px;
+                 margin-left: 6px; }
+  .drop .score { color: var(--dim); font-size: 11px; margin-left: 6px; }
+  .istatus { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+             background: var(--panel); border: 1px solid var(--border);
+             border-radius: 10px; padding: 9px 12px; margin: 16px 0 0; }
+  .istatus .lbl { color: var(--dim); font-size: 12.5px; }
+  .badge.run { color: var(--ok); border-color: rgba(63,185,111,.4); }
+  .badge.down { color: var(--err); border-color: rgba(224,91,91,.4); }
+  .istatus button { padding: 3px 10px; font-size: 12px; }
+
+  /* ── reader ─────────────────────────────────────────── */
+  .reader-head { background: var(--panel); border: 1px solid var(--border);
+                 border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
+  .reader-head h2 { margin: 0; font-size: 17px; font-weight: 650; }
+  .reader-head .meta { color: var(--dim); font-size: 12.5px; margin-top: 4px; }
+  .reader-head .sum { color: var(--dim); font-size: 12.5px; margin-top: 6px;
+                      display: -webkit-box; -webkit-line-clamp: 2;
+                      -webkit-box-orient: vertical; overflow: hidden; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+             background: var(--panel); border: 1px solid var(--border);
+             border-radius: 10px; padding: 9px 12px; margin-bottom: 10px;
+             position: sticky; top: 58px; z-index: 15; }
+  .toolbar .pg { display: flex; align-items: center; gap: 6px; }
+  .toolbar input.jump { width: 74px; text-align: center; }
+  .toolbar .lbl { font-size: 12px; color: var(--dim); min-width: 74px; text-align: center; }
+  .vbtns { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .vbtns button { border: 0; border-radius: 0; background: transparent; padding: 6px 11px; }
+  .vbtns button.on { background: var(--accent); color: #0b1220; font-weight: 650; }
+  .toolbar .sp { flex: 1; }
+  .toolbar .bs { position: relative; }
+  .toolbar .bs input { width: 190px; }
+  .idxchip { background: rgba(229,163,75,.15); border: 1px solid rgba(229,163,75,.5);
+             color: var(--warn); border-radius: 5px; padding: 1px 7px; font-size: 10.5px; }
+  .panes { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+           background: var(--panel); height: calc(100vh - 245px); min-height: 420px; }
+  .panes.v-split { display: grid; grid-template-columns: 1fr 1fr; }
+  .panes.v-text  { display: grid; grid-template-columns: 1fr; }
+  .panes.v-pdf   { display: grid; grid-template-columns: 1fr; }
+  .panes.v-text  .pdf-pane, .panes.v-pdf .text-pane { display: none; }
+  .text-pane { overflow-y: auto; padding: 26px 8px; background: #f4f1ea; }
+  .text-pane .inner { max-width: 74ch; margin: 0 auto; background: #fffdf8;
+                      border-radius: 4px; box-shadow: 0 1px 8px rgba(0,0,0,.25);
+                      padding: 44px 48px; font: 18px/1.7 Georgia, "Times New Roman", serif;
+                      color: #23272e; white-space: pre-wrap; }
+  .text-pane .inner.empty { color: #98a0aa; font: 14px/1.5 system-ui; text-align: center;
+                            padding-top: 80px; }
+  .pdf-pane { overflow: auto; background: #0a0c10; position: relative;
+              display: flex; align-items: flex-start; justify-content: center; }
+  .pdf-pane img { max-width: 100%; height: auto; display: block; margin: 10px 0 30px;
+                  box-shadow: 0 2px 18px rgba(0,0,0,.6); }
+  .pdf-err { position: absolute; top: 40%; left: 0; right: 0; text-align: center;
+             color: var(--err); font-size: 13px; padding: 0 30px; }
+  .spin { position: absolute; top: 42%; left: 50%; transform: translate(-50%,-50%);
+          width: 34px; height: 34px; border: 3px solid var(--border);
+          border-top-color: var(--accent); border-radius: 50%;
+          animation: rot .8s linear infinite; }
+  @keyframes rot { to { transform: translate(-50%,-50%) rotate(360deg); } }
+  .sresults { position: absolute; top: 105%; left: 0; width: 380px; max-width: 80vw;
+              background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+              max-height: 320px; overflow-y: auto; z-index: 50;
+              box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .sresults .item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border);
+                    font-size: 12.5px; }
+  .sresults .item:hover { background: #232c3b; }
+  .sresults .item .pg { color: var(--accent); font-weight: 700; margin-right: 8px; }
+  .sresults .empty { padding: 10px 12px; color: var(--dim); }
+  .flash { position: fixed; bottom: 18px; right: 18px; background: var(--panel2);
+           border: 1px solid var(--border); border-left: 3px solid var(--err);
+           padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 460px;
+           opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 60; }
+  .flash.show { opacity: 1; }
+  @media (max-width: 900px) {
+    .panes.v-split { grid-template-columns: 1fr; }
+    .panes.v-split .pdf-pane { display: none; }
+  }
+
+  /* ── ask view (RAG) ─────────────────────────────────── */
+  .nav { display: flex; gap: 5px; }
+  .nav button { background: transparent; border-color: transparent; color: var(--dim);
+                padding: 5px 12px; border-radius: 7px; }
+  .nav button:hover { border-color: var(--border); color: var(--text); }
+  .nav button.on { background: var(--panel2); border-color: var(--border);
+                   color: var(--text); font-weight: 650; }
+  .ask { max-width: 880px; margin: 0 auto; }
+  .ask-card { background: var(--panel); border: 1px solid var(--border);
+              border-radius: 12px; padding: 14px; }
+  .ask-card textarea { width: 100%; min-height: 74px; resize: vertical; font: inherit;
+                       background: var(--panel2); border: 1px solid var(--border);
+                       border-radius: 8px; padding: 10px 12px; color: var(--text); }
+  .ask-card textarea:focus { outline: none; border-color: var(--accent); }
+  .ask-row { display: flex; gap: 8px; align-items: center; margin-top: 9px; }
+  .ask-row .sp { flex: 1; }
+  .ask-hint { color: var(--dim); font-size: 12px; }
+  .ask-entry { margin-top: 16px; border: 1px solid var(--border); border-radius: 12px;
+               padding: 14px 16px; background: var(--panel); }
+  .ask-entry.user { background: var(--panel2); max-width: 640px; margin-left: auto; }
+  .ask-loading { color: var(--dim); font-size: 13px; padding: 4px 0; }
+  .ask-err { color: var(--err); font-size: 13px; }
+  .md h3, .md h4 { margin: 14px 0 6px; font-size: 15px; }
+  .md h3:first-child, .md h4:first-child { margin-top: 2px; }
+  .md p { margin: 8px 0; }
+  .md ul, .md ol { margin: 8px 0; padding-left: 22px; }
+  .md li { margin: 4px 0; }
+  .md code { font-family: var(--mono); font-size: 12.5px; background: var(--panel2);
+             border-radius: 4px; padding: 1px 5px; }
+  .md strong { color: #fff; }
+  sup.cite { color: var(--accent); font-weight: 700; cursor: pointer; font-size: 10.5px; }
+  .ask-src { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .ask-src-h { font-size: 11.5px; letter-spacing: 1.1px; text-transform: uppercase;
+               color: var(--dim); margin-bottom: 8px; }
+  .src { display: flex; gap: 9px; align-items: baseline; padding: 5px 0; font-size: 13px; }
+  .src .cite { color: var(--accent); font-weight: 700; cursor: pointer; min-width: 18px;
+               text-align: right; font-size: 12px; }
+  .src .t { color: var(--text); }
+  .src .muted { color: var(--dim); font-size: 12px; }
+  .src .open { margin-left: auto; font-size: 12px; white-space: nowrap; cursor: pointer; }
+  .ask-modes { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .ask-modes button { background: transparent; border: none; color: var(--dim);
+                      font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer; }
+  .ask-modes button.on { background: var(--panel2); color: var(--text); font-weight: 650; }
+  .ask-steps { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .ask-steps summary { font-size: 11.5px; letter-spacing: 1.1px; text-transform: uppercase;
+                       color: var(--dim); cursor: pointer; }
+  .ask-steps .step { font-family: var(--mono); font-size: 12px; color: var(--dim);
+                     padding: 4px 0; line-height: 1.5; }
+  .ask-steps .step .t { color: var(--text); font-weight: 650; }
+  .ask-steps .step .ms { opacity: .6; }
+  .ask-steps .step .note { color: var(--text); font-family: inherit; font-size: 12.5px;
+                           margin: 2px 0 2px 18px; font-style: italic; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>📚 DDC Book Reader</h1>
+  <span class="sub" id="root-label"></span>
+  <nav class="nav">
+    <button id="nav-browse" class="on" onclick="navGo('browse')">browse</button>
+    <button id="nav-ask" onclick="navGo('ask')"
+            title="ask the library a question — cited answer over your books">ask the library</button>
+  </nav>
+  <div class="gsearch">
+    <select id="g-mode" title="search type">
+      <option value="titles">titles</option>
+      <option value="semantic">semantic</option>
+    </select>
+    <input type="text" id="g-search" placeholder="Search the library…"
+           autocomplete="off">
+    <div class="drop" id="g-drop" style="display:none"></div>
+  </div>
+</header>
+
+<main id="main"><div class="loading">loading…</div></main>
+<div class="flash" id="flash"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const enc = s => s.split('/').map(encodeURIComponent).join('/');
+const api = async u => {
+  const r = await fetch(u);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = j.error || j.message || JSON.stringify(j); } catch (e) {}
+    throw new Error(`${r.status}: ${msg}`);
+  }
+  return r.json();
+};
+
+const state = { mode: 'browse', browsePath: '', book: null, cur: 0, view: 'text', dpi: 150,
+                gmode: 'titles', askMode: 'research',
+                chat: [], lastSources: [], lastAsk: null, asking: false };
+let imgToken = 0;
+let statusTimer = 0;
+
+function flash(msg, ms = 4200) {
+  const f = $('flash');
+  f.textContent = msg; f.classList.add('show');
+  clearTimeout(f._t); f._t = setTimeout(() => f.classList.remove('show'), ms);
+}
+
+/* ── URL / routing ─────────────────────────────────────── */
+function bookUrl(path, p, v, dpi) {
+  const q = new URLSearchParams();
+  if (p) q.set('p', p);
+  if (v && v !== 'split') q.set('v', v);
+  if (dpi && dpi !== 150) q.set('dpi', dpi);
+  const qs = q.toString();
+  return '/book/' + enc(path) + (qs ? '?' + qs : '');
+}
+function browseUrl(path) { return path ? '/browse/' + enc(path) : '/'; }
+
+function askUrl() {
+  const q = new URLSearchParams();
+  if (state.lastAsk) {
+    if (state.lastAsk.q) q.set('ask', state.lastAsk.q);
+    if (state.lastAsk.ddc) q.set('ddc', state.lastAsk.ddc);
+  }
+  const s = q.toString();
+  return '/ask' + (s ? '?' + s : '');
+}
+
+async function loadUrl() {
+  const m = location.pathname.match(/^\/book\/(.+)$/);
+  if (m) {
+    state.mode = 'book';
+    navMark('browse');
+    await openBook(decodeURIComponent(m[1]), new URLSearchParams(location.search));
+  } else if (location.pathname.startsWith('/ask')) {
+    await askView(new URLSearchParams(location.search));
+  } else {
+    state.mode = 'browse';
+    navMark('browse');
+    state.browsePath = decodeURIComponent(
+      location.pathname.replace(/^\/browse\//, '').replace(/\/$/, ''));
+    sessionStorage.setItem('ddc-browse', state.browsePath);
+    await renderBrowse();
+  }
+}
+window.addEventListener('popstate', loadUrl);
+
+function pushUrl() {
+  const u = state.mode === 'book'
+    ? bookUrl(state.book.path, state.cur, state.view, state.dpi)
+    : state.mode === 'ask'
+      ? askUrl()
+      : browseUrl(state.browsePath);
+  if (u !== location.pathname + location.search) history.pushState({}, '', u);
+}
+
+function navMark(mode) {
+  if ($('nav-browse')) $('nav-browse').classList.toggle('on', mode === 'browse');
+  if ($('nav-ask')) $('nav-ask').classList.toggle('on', mode === 'ask');
+}
+function navGo(mode) {
+  if (mode === 'ask') {
+    if (state.mode === 'ask') { const q = $('ask-q'); if (q) q.focus(); return; }
+    location.assign(askUrl());
+  } else if (state.mode !== 'browse') {
+    goBrowse(sessionStorage.getItem('ddc-browse') || '');
+  }
+}
+
+/* ── browse view ───────────────────────────────────────── */
+function crumbs(path, extra) {
+  const parts = path ? path.split('/') : [];
+  let h = `<a onclick="goBrowse('')">DDC</a>`;
+  let acc = '';
+  parts.forEach((p, i) => {
+    acc = acc ? acc + '/' + p : p;
+    h += ` <span>›</span> ${i < parts.length - 1 || extra
+      ? `<a onclick="goBrowse('${acc.replace(/'/g, "\\'")}')">${p}</a>` : `<b>${p}</b>`}`;
+  });
+  return h;
+}
+function goBrowse(path) { location.assign(browseUrl(path)); }
+
+async function renderBrowse() {
+  clearInterval(statusTimer);
+  const main = $('main');
+  main.innerHTML = crumbs(state.browsePath) +
+    `<div id="istatus-wrap"></div>
+     <div id="grid-wrap" style="margin-top:16px"><div class="loading">scanning folder…</div></div>`;
+  loadIndexStatus();
+  statusTimer = setInterval(() => { if (state.mode === 'browse') loadIndexStatus(); }, 20000);
+  let j;
+  try { j = await api('/api/browse?path=' + encodeURIComponent(state.browsePath)); }
+  catch (e) { $('grid-wrap').innerHTML = `<div class="loading" style="color:var(--err)">${e.message}</div>`; return; }
+
+  let h = '';
+  if (j.dirs.length) {
+    h += `<div class="sec-h">📂 ${j.dirs.length} folder${j.dirs.length > 1 ? 's' : ''}</div>
+          <div class="grid">` +
+      j.dirs.map(d =>
+        `<div class="tile" onclick="goBrowse('${state.browsePath ? state.browsePath + '/' : ''}${d.replace(/'/g, "\\'")}')">
+           <div class="t">📁 ${d}</div>
+           <div class="m"><span>open</span></div></div>`).join('') + `</div>`;
+  }
+  if (j.books.length) {
+    h += `<div class="sec-h">📖 ${j.books.length} book${j.books.length > 1 ? 's' : ''}</div>
+          <div class="grid">` +
+      j.books.map(b =>
+        `<div class="tile" onclick="openBookLink('${b.path.replace(/'/g, "\\'")}')">
+           <div class="t">${esc(b.title)}</div>
+           <div class="m">
+             ${b.authors ? `<span>${esc(b.authors)}</span>` : ''}
+             <span>${b.pages} pages</span>
+             ${b.ddc ? `<span class="badge ddc">${esc(b.ddc)}</span>` : ''}
+             ${b.has_pdf ? `<span class="badge pdf">PDF</span>` : ''}
+           </div></div>`).join('') + `</div>`;
+  }
+  if (!j.dirs.length && !j.books.length)
+    h = `<div class="loading">empty folder</div>`;
+  $('grid-wrap').innerHTML = h;
+}
+function openBookLink(path, page) { location.assign(bookUrl(path, page || null)); }
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ── one-machine status: Qdrant / Ollama / indexer ───────── */
+async function loadIndexStatus() {
+  const wrap = $('istatus-wrap');
+  if (!wrap) return;
+  let s;
+  try { s = await api('/api/index/status'); }
+  catch (e) { wrap.innerHTML = ''; return; }
+  const q = s.qdrant, o = s.ollama, ix = s.indexer;
+  const bits = [];
+  bits.push(q.ok
+    ? `<span class="badge ${q.points > 0 ? '' : 'down'}">${s.books_indexed}/${s.books_total} books · ${q.points.toLocaleString()} pages in ${esc(s.collection)}</span>`
+    : `<span class="badge down">Qdrant down</span>`);
+  bits.push(o.ok && o.model_ready
+    ? `<span class="badge">ollama ${esc(s.model)}</span>`
+    : `<span class="badge down">ollama ${o.ok ? 'model missing' : 'down'}</span>`);
+  if (ix.running)
+    bits.push(`<span class="badge run">indexer running${ix.progress ? ' · ' + esc(ix.progress) : ''}</span>`);
+  else if (ix.last_done)
+    bits.push(`<span class="lbl">${esc(ix.last_done)}</span>`);
+  const btns = ix.running
+    ? `<button onclick="indexStop()">stop indexer</button>`
+    : `<button onclick="indexStart()">index new books</button>`;
+  wrap.innerHTML = `<div class="istatus"><span class="lbl">semantic index</span>` +
+    bits.join('') + `<span style="flex:1"></span>${btns}</div>`;
+}
+async function indexStart() {
+  try {
+    const j = await apiPost('/api/index/start');
+    flash('indexer started: ' + (j.log || ''), 6000);
+  } catch (e) { flash(e.message, 6000); }
+  loadIndexStatus();
+}
+async function indexStop() {
+  try {
+    await apiPost('/api/index/stop');
+    flash('stop signal sent to indexer');
+  } catch (e) { flash(e.message, 6000); }
+  loadIndexStatus();
+}
+const apiPost = async u => {
+  const r = await fetch(u, { method: 'POST' });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = j.error || j.message || JSON.stringify(j); } catch (e) {}
+    throw new Error(`${r.status}: ${msg}`);
+  }
+  return r.json();
+};
+
+/* ── book view ─────────────────────────────────────────── */
+function validPage(v) {
+  const n = parseInt(v, 10);
+  if (!state.book || !n) return null;
+  return state.book.page_nums.includes(n) ? n : null;
+}
+async function openBook(path, qs) {
+  const main = $('main');
+  main.innerHTML = `<div class="loading">opening book…</div>`;
+  try {
+    const j = await api('/api/book?path=' + encodeURIComponent(path));
+    state.book = Object.assign({ path }, j);
+    // Text-only by default: page images (rendered PDF) are only fetched when
+    // the viewer is explicitly switched to pdf/split — no image ingestion
+    // while reading.
+    state.view = ['text','pdf','split'].includes(qs.get('v')) ? qs.get('v') : 'text';
+    if (!state.book.has_pdf && !state.book.has_images && state.view !== 'text') state.view = 'text';
+    state.dpi = Math.min(320, Math.max(72, parseInt(qs.get('dpi') || '150', 10) || 150));
+    state.cur = validPage(qs.get('p')) || j.page_nums[0];
+  } catch (e) {
+    main.innerHTML = `<div class="loading" style="color:var(--err)">${esc(e.message)}</div>`;
+    state.book = null; return;
+  }
+  renderBookShell();
+  loadPage();
+}
+
+function renderBookShell() {
+  const b = state.book;
+  const folder = b.path.split('/').slice(0, -1).join('/');
+  $('main').innerHTML = `
+  <div class="crumbs">${crumbs(folder, true)} <span>›</span>
+    <b>${esc(b.title || b.path.split('/').pop())}</b>
+  </div>
+  <div class="reader-head">
+    <h2>${esc(b.title)}</h2>
+    <div class="meta">
+      ${b.authors ? esc(b.authors) + ' · ' : ''}
+      ${b.pub_date ? esc(b.pub_date) + ' · ' : ''}
+      ${b.publisher ? esc(b.publisher) + ' · ' : ''}
+      ${b.ddc ? `<span class="badge ddc">DDC ${esc(b.ddc)}</span> ` : ''}
+      ${b.page_nums.length} pages${b.has_pdf ? '' : (b.has_images ? ' · <i>no PDF — split shows stored figures</i>' : ' · <i>no PDF found</i>')}
+    </div>
+    ${b.summary ? `<div class="sum">${esc(b.summary)}</div>` : ''}
+  </div>
+  <div class="toolbar">
+    <div class="pg">
+      <button id="btn-prev" onclick="step(-1)">‹ prev</button>
+      <span class="lbl" id="page-label"></span>
+      <button id="btn-next" onclick="step(1)">next ›</button>
+      <input class="jump" id="page-input" type="number" min="1"
+             title="jump to page (Enter)">
+      <button class="jump" style="padding:6px 9px" onclick="jumpTo()">go</button>
+    </div>
+    ${(b.has_pdf || b.has_images) ? `
+    <div class="vbtns" id="vbtns">
+      <button data-v="text">text</button>
+      <button data-v="pdf">${b.has_pdf ? 'pdf' : 'img'}</button>
+      <button data-v="split">split</button>
+    </div>
+    ${b.has_pdf ? `
+    <select id="dpi-sel" title="PDF render quality">
+      <option value="100">100 dpi</option>
+      <option value="150">150 dpi</option>
+      <option value="200">200 dpi</option>
+      <option value="300">300 dpi</option>
+    </select>` : ''}` : ''}
+    <span class="idxchip" id="idx-chip" style="display:none">index page</span>
+    <div class="sp"></div>
+    <div class="bs">
+      <input type="text" id="book-search" placeholder="search in this book… (Enter)"
+             autocomplete="off">
+      <div class="sresults" id="s-results" style="display:none"></div>
+    </div>
+  </div>
+  <div class="panes" id="panes">
+    <div class="text-pane"><div class="inner" id="page-text"></div></div>
+    <div class="pdf-pane" id="pdf-pane">
+      <div class="spin" id="spin" style="display:none"></div>
+      <div class="pdf-err" id="pdf-err" style="display:none"></div>
+      <img id="page-img" alt="PDF page" style="display:none">
+    </div>
+  </div>`;
+
+  const idx = b.page_nums.indexOf(state.cur);
+  $('btn-prev').disabled = idx <= 0;
+  $('btn-next').disabled = idx >= b.page_nums.length - 1;
+  $('page-label').textContent = `${state.cur} / ${b.page_nums.length}`;
+  $('page-input').value = state.cur;
+  $('page-input').max = b.page_nums.length;
+  const setView = v => {
+    state.view = v;
+    $('panes').className = 'panes v-' + v;
+    document.querySelectorAll('#vbtns button').forEach(x =>
+      x.classList.toggle('on', x.dataset.v === v));
+  };
+  setView(state.view);
+  document.querySelectorAll('#vbtns button').forEach(btn =>
+    btn.onclick = () => { setView(btn.dataset.v); loadPage(); pushUrl(); });
+  const dsel = $('dpi-sel');
+  if (dsel) {
+    dsel.value = String(state.dpi);
+    dsel.onchange = () => { state.dpi = +dsel.value; loadPage(); pushUrl(); };
+  }
+  $('page-input').onkeydown = e => { if (e.key === 'Enter') jumpTo(); };
+  const bs = $('book-search');
+  bs.onkeydown = e => { if (e.key === 'Enter') bookSearch(); };
+  bs.onblur = () => setTimeout(() => $('s-results').style.display = 'none', 250);
+  setIdxChip();
+}
+
+function setIdxChip() {
+  const chip = $('idx-chip');
+  if (!chip) return;
+  chip.style.display = (state.book.is_index[state.cur]) ? '' : 'none';
+}
+function step(d) {
+  const i = state.book.page_nums.indexOf(state.cur);
+  const ni = i + d;
+  if (ni < 0 || ni >= state.book.page_nums.length) return;
+  state.cur = state.book.page_nums[ni];
+  loadPage();
+}
+function jumpTo() {
+  const n = parseInt($('page-input').value, 10);
+  if (!state.book.page_nums.includes(n)) { flash(`page ${n} not in this book`); return; }
+  state.cur = n;
+  loadPage();
+}
+function updateToolbar() {
+  const b = state.book, i = b.page_nums.indexOf(state.cur);
+  $('btn-prev').disabled = i <= 0;
+  $('btn-next').disabled = i >= b.page_nums.length - 1;
+  $('page-label').textContent = `${state.cur} / ${b.page_nums.length}`;
+  $('page-input').value = state.cur;
+  setIdxChip();
+  pushUrl();
+}
+
+async function loadPage() {
+  const b = state.book, token = ++imgToken;
+  updateToolbar();
+  const textPane = $('page-text'), img = $('page-img');
+  const showText = state.view !== 'pdf', showPdf = state.view !== 'text' && (b.has_pdf || b.has_images);
+
+  if (showText) {
+    try {
+      const j = await api(`/api/page?path=${encodeURIComponent(b.path)}&page=${state.cur}`);
+      if (token !== imgToken) return;
+      if (j.text && j.text.trim()) {
+        textPane.textContent = j.text; textPane.classList.remove('empty');
+      } else {
+        textPane.textContent = '— no OCR text on this page —';
+        textPane.classList.add('empty');
+      }
+    } catch (e) {
+      textPane.textContent = 'failed to load page: ' + e.message;
+      textPane.classList.add('empty');
+    }
+  }
+
+  if (showPdf) {
+    const err = $('pdf-err');
+    err.style.display = 'none'; err.textContent = '';
+    img.style.display = 'none';
+    $('spin').style.display = '';
+    const src = `/api/page-image?path=${encodeURIComponent(b.path)}&page=${state.cur}&dpi=${state.dpi}`;
+    const done = ok => {
+      if (token !== imgToken) return;
+      $('spin').style.display = 'none';
+      if (ok) { img.style.display = 'block'; }
+      else {
+        img.style.display = 'none';
+        err.style.display = '';
+        err.textContent = b.has_pdf ? 'could not render this PDF page' : 'no stored image on this page';
+      }
+    };
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    img.src = src;
+  }
+}
+
+async function bookSearch() {
+  const q = $('book-search').value.trim();
+  const box = $('s-results');
+  if (!q) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = '<div class="empty">searching…</div>';
+  try {
+    const j = await api(`/api/search?path=${encodeURIComponent(state.book.path)}&q=${encodeURIComponent(q)}`);
+    if (!j.results.length) { box.innerHTML = '<div class="empty">no matches</div>'; return; }
+    box.innerHTML = j.results.map(r =>
+      `<div class="item" onmousedown="event.preventDefault();gotoPage(${r.page})">
+         <span class="pg">p.${r.page}</span>${esc(r.snippet)}</div>`).join('');
+  } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+function gotoPage(n) {
+  state.cur = n;
+  $('s-results').style.display = 'none';
+  loadPage();
+  $('page-text').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ── global search ─────────────────────────────────────── */
+async function globalSearch() {
+  const q = $('g-search').value.trim();
+  const box = $('g-drop');
+  if (!q) { box.style.display = 'none'; return; }
+  if (state.gmode === 'semantic') { semanticSearch(q, box); return; }
+  try {
+    const j = await api('/api/search-books?q=' + encodeURIComponent(q));
+    if (!j.ready) {
+      box.innerHTML = `<div class="item"><div class="m">title index still building…
+        (${j.count} books so far)</div></div>`;
+      box.style.display = ''; return;
+    }
+    if (!j.books.length) { box.innerHTML = '<div class="item"><div class="m">no books found</div></div>'; }
+    else box.innerHTML = j.books.map(b =>
+      `<div class="item" onclick="openBookLink('${b.path.replace(/'/g, "\\'")}')">
+         <div class="t">${esc(b.title)}</div>
+         <div class="m">${esc(b.authors || '')} ${b.ddc ? '· DDC ' + esc(b.ddc) : ''} · ${b.pages} pages</div>
+       </div>`).join('');
+    box.style.display = '';
+  } catch (e) { flash(e.message); }
+}
+
+/* semantic search hits -> jump straight to book + page in the reader */
+async function semanticSearch(q, box) {
+  box.innerHTML = '<div class="item"><div class="m">embedding query + searching semantic index…</div></div>';
+  box.style.display = '';
+  try {
+    const j = await api('/api/semantic?q=' + encodeURIComponent(q));
+    if (!j.hits.length) {
+      box.innerHTML = '<div class="item"><div class="m">no semantic matches' +
+        (j.books_indexed ? '' : ' (index is empty — run the indexer)') + '</div></div>';
+      return;
+    }
+    const note = j.books_indexed
+      ? `<div class="item" style="cursor:default"><div class="m">searching ${j.books_indexed} indexed book(s) · bge-m3</div></div>`
+      : '';
+    box.innerHTML = note + j.hits.map(h => {
+      const onclick = h.path
+        ? `onclick="openBookLink('${h.path.replace(/'/g, "\\'")}', ${h.page_num})"`
+        : 'style="opacity:.55" title="local index still building — not clickable yet"';
+      return `<div class="item" ${onclick}>
+        <div class="t">${esc(h.title)}<span class="pgref">p.${h.page_num ?? '?'}</span>
+        <span class="score">sim ${h.score}</span></div>
+        <div class="snip">${h.snippet ? esc(h.snippet) : '<i>no text on this page (image-only)</i>'}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="item"><div class="m" style="color:var(--err)">${esc(e.message)}</div></div>`;
+  }
+}
+
+/* ── ask view: RAG answers over the library ─────────────── */
+let ddcOptionsPromise = null;
+function populateDdc() {
+  if (!ddcOptionsPromise)
+    ddcOptionsPromise = api('/api/browse?path=').then(j => j.dirs || [])
+      .catch(() => []);
+  ddcOptionsPromise.then(dirs => {
+    const sel = $('ask-ddc');
+    if (!sel) return;
+    dirs.forEach(d => sel.insertAdjacentHTML('beforeend',
+      `<option value="${esc(d)}">${esc(d)}</option>`));
+    if (state.lastAsk && state.lastAsk.ddc) sel.value = state.lastAsk.ddc;
+  });
+}
+
+async function askView(qs = new URLSearchParams()) {
+  state.mode = 'ask';
+  navMark('ask');
+  clearInterval(statusTimer);
+  $('main').innerHTML = `
+    <div class="ask">
+      <div class="ask-card">
+        <textarea id="ask-q" placeholder="Ask your library… e.g. “What do these books say about how fermentation affects wine flavour?”"></textarea>
+        <div class="ask-row">
+          <select id="ask-ddc" title="scope the search to one DDC section">
+            <option value="">all sections</option>
+          </select>
+          <div class="ask-modes" title="research: the agent reasons between searches (reformulates, pulls full pages) — slower, better · quick: one search, one answer — fast">
+            <button id="ask-mode-research" class="on">research</button>
+            <button id="ask-mode-quick">quick</button>
+          </div>
+          <span class="ask-hint" id="ask-hint">agent: reasons between searches · answers cite pages you can open</span>
+          <span class="sp"></span>
+          <button id="ask-new" title="start a fresh question">new</button>
+          <button id="ask-btn">ask ⌘↵</button>
+        </div>
+      </div>
+      <div id="ask-thread"></div>
+    </div>`;
+  $('ask-q').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ask();
+  });
+  $('ask-btn').onclick = ask;
+  $('ask-new').onclick = askNew;
+  $('ask-mode-research').onclick = () => setAskMode('research');
+  $('ask-mode-quick').onclick = () => setAskMode('quick');
+  setAskMode(state.askMode || 'research');
+  populateDdc();
+  // deep link: /ask?ask=…&ddc=… re-asks the question
+  const q = qs.get('ask') || '';
+  if (q) {
+    state.chat = [];
+    state.lastAsk = { q, ddc: qs.get('ddc') || '' };
+    $('ask-q').value = q;
+    ask();
+  } else {
+    $('ask-q').focus();
+  }
+}
+
+function askNew() {
+  state.chat = []; state.lastSources = []; state.lastAsk = null;
+  const th = $('ask-thread'); if (th) th.innerHTML = '';
+  history.replaceState({}, '', '/ask');
+  const q = $('ask-q'); if (q) q.focus();
+}
+
+function setAskMode(m) {
+  state.askMode = m;
+  const r = $('ask-mode-research'), q = $('ask-mode-quick');
+  if (r) r.classList.toggle('on', m === 'research');
+  if (q) q.classList.toggle('on', m === 'quick');
+  const h = $('ask-hint');
+  if (h) h.textContent = m === 'research'
+    ? 'agent: reasons between searches · answers cite pages you can open'
+    : 'quick: one hybrid search, one answer · cites pages you can open';
+}
+
+async function ask() {
+  if (state.asking) return;
+  const q = ($('ask-q').value || '').trim();
+  if (q.length < 3) { flash('type a question first'); return; }
+  const ddc = $('ask-ddc').value || (state.lastAsk ? state.lastAsk.ddc : '');
+  state.asking = true;
+  state.lastAsk = { q, ddc };
+  state.chat.push({ role: 'user', content: q });
+  $('ask-q').value = '';
+  addThread('user', q);
+  const el = state.askMode === 'research'
+    ? addThread('loading', 'research')
+    : addThread('loading');
+  const btn = $('ask-btn'); if (btn) btn.disabled = true;
+  try {
+    let j;
+    if (state.askMode === 'research') {
+      j = await agentAsk(q, ddc, el);   // live-updates the reasoning trace in el
+    } else {
+      j = await apiPostJson('/api/chat',
+        { q, ddc, history: state.chat.slice(0, -1) });
+      el.className = 'ask-entry';
+      renderAnswer(el, j);
+    }
+    state.chat.push({ role: 'assistant', content: j.answer });
+    state.lastSources = j.sources || [];
+    pushUrl();
+  } catch (e) {
+    el.className = 'ask-entry';
+    el.innerHTML = `<div class="ask-err">${esc(e.message)}</div>`;
+  } finally {
+    state.asking = false;
+    if ($('ask-btn')) $('ask-btn').disabled = false;
+  }
+}
+
+function addThread(kind, arg) {
+  const th = $('ask-thread');
+  const d = document.createElement('div');
+  if (kind === 'user') {
+    d.className = 'ask-entry user';
+    d.textContent = arg;
+  } else if (arg === 'research') {
+    d.className = 'ask-entry ask-stream';
+    d.innerHTML = `
+      <div class="ask-loading">reasoning between searches — reformulating, pulling pages…</div>
+      <details class="ask-steps" open><summary>reasoning</summary><div class="steps"></div></details>`;
+  } else {
+    d.className = 'ask-entry';
+    d.innerHTML = '<div class="ask-loading">searching the index, then writing — can take a minute while the embedding queue is busy…</div>';
+  }
+  th.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  return d;
+}
+
+function stepArgs(a) {
+  if (!a) return '';
+  const bits = [];
+  if (a.q) bits.push('"' + a.q + '"');
+  if (a.mode && a.mode !== 'hybrid') bits.push(a.mode);
+  if (a.ddc) bits.push('ddc:' + a.ddc);
+  if (a.book_id) bits.push('book:' + a.book_id);
+  if (a.point_id) bits.push('#' + a.point_id);
+  return bits.join(' · ');
+}
+
+/* agent answer over SSE: step events land live in the reasoning trace,
+   then one done event with the full answer + sources */
+async function agentAsk(q, ddc, el) {
+  const stepsBox = el.querySelector('.steps');
+  let done = null;
+  await ssePost('/api/agent', { q, ddc, history: state.chat.slice(0, -1) },
+    (ev, data) => {
+      if (ev === 'step') {
+        const d = document.createElement('div');
+        d.className = 'step';
+        d.innerHTML = `<span>${data.i}.</span> <span class="t">${esc(data.tool)}</span> ` +
+          `${esc(stepArgs(data.args))} <span>→</span> ${esc(data.summary || '')} ` +
+          `<span class="ms">${data.ms}ms</span>`;
+        if (data.note) {
+          const n = document.createElement('div');
+          n.className = 'note';
+          n.textContent = data.note;
+          d.appendChild(n);
+        }
+        stepsBox.appendChild(d);
+        el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      } else if (ev === 'done') {
+        done = data;
+        el.querySelector('.ask-loading')?.remove();
+        const inner = document.createElement('div');
+        el.insertBefore(inner, el.querySelector('.ask-steps'));
+        renderAnswer(inner, done);
+      } else if (ev === 'error') {
+        throw new Error(data.error || 'agent error');
+      }
+    });
+  if (!done) throw new Error('agent stream ended without a result');
+  return done;
+}
+
+async function ssePost(url, body, onEvent) {
+  const r = await fetch(url, { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body) });
+  if (!r.ok || !r.body) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = j.error || j.message || msg; } catch (e) {}
+    throw new Error(`${r.status}: ${msg}`);
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done: eof, value } = await reader.read();
+    if (eof) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+      let ev = 'message', data = '';
+      raw.split('\n').forEach(line => {
+        if (line.startsWith('event:')) ev = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      });
+      if (data) { try { onEvent(ev, JSON.parse(data)); } catch (e) {} }
+    }
+  }
+}
+
+function renderAnswer(el, j) {
+  const srcs = j.sources || [];
+  el.innerHTML = `
+    <div class="md">${mdLite(j.answer)}</div>
+    ${srcs.length ? `<div class="ask-src">
+      <div class="ask-src-h">sources · ${srcs.length} pages
+        <span> · retrieved ${j.retrieval_ms} ms · answered ${j.gen_ms} ms</span></div>
+      ${srcs.map(s => `
+        <div class="src" id="src-${s.n}">
+          <sup class="cite" data-n="${s.n}">[${s.n}]</sup>
+          <span class="t">${esc(s.title)} <span class="muted">p. ${esc(s.page)}</span></span>
+          ${s.path ? `<a class="open" data-n="${s.n}">open page ↗</a>`
+                   : `<span class="muted">local path not found</span>`}
+        </div>`).join('')}
+    </div>` : ''}`;
+  el.querySelectorAll('.src .open').forEach(a =>
+    a.onclick = () => openSource(+a.dataset.n));
+  el.querySelectorAll('sup.cite').forEach(c =>
+    c.onclick = () => {
+      const t = document.getElementById('src-' + (c.dataset.n || ''));
+      if (t) t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+}
+
+function openSource(n) {
+  const s = (state.lastSources || []).find(x => x.n === n);
+  if (!s || !s.path) { flash('no local path for this source'); return; }
+  location.assign('/book/' + enc(s.path) +
+                   '?p=' + encodeURIComponent(s.page) + '&v=split');
+}
+
+function apiPostJson(u, body) {
+  return fetch(u, { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body) })
+    .then(async r => {
+      if (!r.ok) {
+        let msg = r.statusText;
+        try { const j = await r.json(); msg = j.error || j.message || JSON.stringify(j); } catch (e) {}
+        throw new Error(`${r.status}: ${msg}`);
+      }
+      return r.json();
+    });
+}
+
+/* minimal markdown: headings, bold/italic, code, lists, [n] citations.
+   Lists are converted BEFORE inline italics, so `*` bullets survive. */
+function mdLite(src) {
+  let h = esc(src);
+  h = h.replace(/^###\s+(.+)$/gm, '<h4>$1</h4>')
+       .replace(/^##\s+(.+)$/gm, '<h3>$1</h3>')
+       .replace(/^#\s+(.+)$/gm, '<h3>$1</h3>');
+  h = h.replace(/(?:^|\n)((?:[-*+] [^\n]*(?:\n|$))+)/g, (m, b) =>
+    '\n\n<ul>\n' + b.trim().split('\n')
+      .map(l => '<li>' + l.replace(/^[-*+] /, '') + '</li>').join('\n') + '\n</ul>\n\n');
+  h = h.replace(/(?:^|\n)((?:\d+\. [^\n]*(?:\n|$))+)/g, (m, b) =>
+    '\n\n<ol>\n' + b.trim().split('\n')
+      .map(l => '<li>' + l.replace(/^\d+\. /, '') + '</li>').join('\n') + '\n</ol>\n\n');
+  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+       .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+       .replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\[(\d+)\]/g, '<sup class="cite" data-n="$1">[$1]</sup>');
+  h = h.split(/\n{2,}/).map(b => {
+    b = b.trim();
+    if (!b) return '';
+    if (/^<(h\d|ul|ol)/.test(b)) return b;
+    return '<p>' + b.replace(/\n/g, '<br>') + '</p>';
+  }).join('\n');
+  return h;
+}
+
+/* ── keyboard ──────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (state.mode !== 'book' || !state.book) return;
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'ArrowRight' || e.key === 'n') { e.preventDefault(); step(1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'p') { e.preventDefault(); step(-1); }
+  else if (e.key === 'Home') { e.preventDefault(); gotoPage(state.book.page_nums[0]); }
+  else if (e.key === 'End') { e.preventDefault(); gotoPage(state.book.page_nums.at(-1)); }
+});
+
+/* ── boot ──────────────────────────────────────────────── */
+async function boot() {
+  try {
+    const h = await api('/api/health');
+    $('root-label').textContent = h.root;
+  } catch (e) { $('root-label').textContent = ''; }
+  const gs = $('g-search');
+  gs.oninput = () => { clearTimeout(gs._t); gs._t = setTimeout(globalSearch, 220); };
+  gs.onblur = () => setTimeout(() => $('g-drop').style.display = 'none', 250);
+  const gm = $('g-mode');
+  gm.onchange = () => {
+    state.gmode = gm.value;
+    gs.placeholder = gm.value === 'semantic'
+      ? 'Semantic search, e.g. "how to ferment wine grapes"…'
+      : 'Search all books by title / author…';
+    if (gs.value.trim()) globalSearch();
+  };
+  gs.placeholder = 'Search all books by title / author…';
+  await loadUrl();
+}
+boot();
+</script>
+</body>
+</html>

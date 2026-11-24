@@ -1,0 +1,72 @@
+{
+  "ocr": {
+    "input": "/home/matt/Psychology",
+    "output": "/home/matt/converted/Psychology",
+    "gpu": "auto",
+    "gpus": [
+      "1"
+    ],
+    "chunk": 20,
+    "batch": 2,
+    "resume": true,
+    "env": {
+      "DETECTOR_BATCH_SIZE": "",
+      "LAYOUT_BATCH_SIZE": "",
+      "ORDER_BATCH_SIZE": "",
+      "RECOGNITION_BATCH_SIZE": "",
+      "TABLE_REC_BATCH_SIZE": "",
+      "TEXIFY_BATCH_SIZE": "",
+      "SURYA_OCR_DPI": "",
+      "SURYA_TABLE_DPI": ""
+    }
+  },
+  "rename": {
+    "source": "/home/matt/converted/Psychology",
+    "dest": "/home/matt/DDC",
+    "execute": true,
+    "overwrite": false
+  },
+  "enrich": {
+    "input": "/home/matt/converted",
+    "category": "",
+    "dry_run": false,
+    "api_base": "http://10.90.38.19:8000/v1",
+    "model": "squigFast"
+  },
+  "recipes": {
+    "input": "/home/matt/DDC/600_Technology/640_Home_and_family_management",
+    "output": "/home/matt/recipes_out",
+    "llm_base_1": "http://10.90.38.19:8000/v1",
+    "llm_base_2": "",
+    "llm_model": "squigFast",
+    "max_concurrent": 8,
+    "batch_size": 5,
+    "flush_interval": 5,
+    "max_files": "",
+    "start_file": "",
+    "resume": true
+  },
+  "index": {
+    "root": "/home/matt/DDC",
+    "limit": 0,
+    "dry_run": false,
+    "embed_base_url": "http://localhost:11434",
+    "embed_model": "bge-m3",
+    "qdrant_url": "http://localhost:6333",
+    "ollama_gpu": "auto",
+    "relocate_ollama": false
+  },
+  "ollama": {
+    "gpu": "auto",
+    "num_parallel": 1,
+    "host": "0.0.0.0:11434",
+    "pull_model": "bge-m3"
+  },
+  "squig": {
+    "last": "squigFastThink"
+  },
+  "gpu_power": {
+    "0": 150,
+    "2": 150
+  }
+}

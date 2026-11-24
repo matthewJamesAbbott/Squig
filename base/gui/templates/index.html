@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDC Book Pipeline</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b23; --panel2: #1c2330; --border: #2a3342;
+    --text: #d7dee8; --dim: #8b98ab; --accent: #4da3ff; --ok: #3fb96f;
+    --warn: #e5a34b; --err: #e05b5b; --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+           background: var(--panel); border-bottom: 1px solid var(--border);
+           position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px;
+          border-radius: 999px; background: var(--panel2); border: 1px solid var(--border);
+          font-size: 12.5px; white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.err { background: var(--err); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+  .sq-start.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+  main { padding: 18px 20px 60px; max-width: 1500px; margin: 0 auto; }
+  .gpus { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .gpu-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .gpu-card .name { font-weight: 600; font-size: 13.5px; }
+  .gpu-card .sub { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .gpu-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 4px; }
+  .gpu-checks label { display: flex; gap: 6px; align-items: center; font-size: 13px; margin: 0; cursor: pointer; }
+  .gpu-checks .free { color: var(--dim); font-size: 12px; }
+  .pow-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--panel);
+             border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px; margin-bottom: 12px; }
+  .pow-bar .lbl { font-size: 13px; font-weight: 600; }
+  .pow-btn { margin-top: 0; }
+  .pow-btn.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+  .gpu-pow { display: flex; gap: 6px; margin-top: 8px; }
+  .bar { height: 8px; background: var(--panel2); border-radius: 4px; margin: 8px 0 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .bar > div.hot { background: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { font-size: 14.5px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .card .desc { color: var(--dim); font-size: 12.5px; margin-bottom: 10px; }
+  .card h2 .tag { font-size: 10.5px; color: var(--dim); border: 1px solid var(--border);
+                  border-radius: 4px; padding: 1px 6px; font-weight: 400; }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 3px; }
+  input[type=text], input[type=number], select {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 13px; }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 10px 0 0; font-size: 13px; }
+  .check input { accent-color: var(--accent); }
+  button { background: var(--accent); border: none; color: #08131f; font-weight: 600;
+           border-radius: 7px; padding: 8px 16px; cursor: pointer; font-size: 13.5px; margin-top: 12px; }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  button.danger { background: var(--err); color: white; }
+  button.small { padding: 3px 10px; font-size: 12px; margin: 0; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--dim); font-size: 12.5px; }
+  #tasks { margin-top: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; }
+  .st { font-weight: 600; font-size: 12px; }
+  .st.running { color: var(--accent); } .st.success { color: var(--ok); }
+  .st.failed { color: var(--err); } .st.stopped { color: var(--warn); }
+  #log { background: #0a0d12; border: 1px solid var(--border); border-radius: 8px;
+         font-family: var(--mono); font-size: 12px; padding: 10px 12px; height: 380px;
+         overflow-y: auto; white-space: pre-wrap; word-break: break-word; margin-top: 10px; }
+  #logbar { display: flex; gap: 10px; align-items: center; }
+  #logbar select { width: auto; flex: 1; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+              align-items: center; justify-content: center; z-index: 20; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           width: 560px; max-width: 92vw; max-height: 75vh; padding: 16px; overflow: auto; }
+  .modal .pathline { font-family: var(--mono); font-size: 12.5px; color: var(--accent);
+                     background: var(--panel2); padding: 6px 9px; border-radius: 6px;
+                     word-break: break-all; }
+  .dirlist { margin: 10px 0; max-height: 300px; overflow-y: auto; }
+  .dirlist div { padding: 5px 9px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+  .dirlist div:hover { background: var(--panel2); }
+  .modal-foot { display: flex; gap: 10px; justify-content: flex-end; }
+  .flash { position: fixed; bottom: 18px; right: 18px; background: var(--panel2);
+           border: 1px solid var(--border); border-left: 3px solid var(--accent);
+           padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 420px; z-index: 30;
+           opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .flash.show { opacity: 1; }
+  .flash.err { border-left-color: var(--err); }
+  .flash.ok { border-left-color: var(--ok); }
+  .tprog { position: relative; height: 13px; background: var(--panel2); border-radius: 3px;
+           margin-top: 5px; max-width: 240px; overflow: hidden; }
+  .tprog > div { height: 100%; background: var(--accent); border-radius: 3px; transition: width .8s; }
+  .tprog span { position: absolute; inset: 0; display: flex; align-items: center;
+                justify-content: center; font-size: 9.5px; color: #fff; letter-spacing: .3px; }
+  .pbar { position: relative; height: 18px; background: var(--panel2); border-radius: 4px;
+          margin: 8px 0 6px; overflow: hidden; }
+  .pbar > div { height: 100%; background: var(--accent); transition: width 1s; }
+  .pbar.ok > div { background: var(--ok); }
+  .pbar.warn > div { background: var(--warn); }
+  .pbar span { position: absolute; inset: 0; display: flex; align-items: center;
+               justify-content: center; font-size: 11px; color: #fff; letter-spacing: .3px; }
+  .pp-state { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+              border: 1px solid var(--border); }
+  .pp-state.running { color: var(--ok); border-color: var(--ok); }
+  .pp-state.quiet { color: var(--warn); border-color: var(--warn); }
+  .pp-state.stalled { color: var(--err); border-color: var(--err); }
+  .pp-state.done { color: var(--dim); }
+  .pp-state.failed { color: var(--err); border-color: var(--err); }
+  .pp-meta { font-size: 12.5px; margin: 2px 0; }
+  .pp-meta .dim { color: var(--dim); }
+  .llmstat { font-size: 11.5px; margin: 2px 0 0; min-height: 14px; }
+  .llmstat.ok { color: var(--ok); } .llmstat.err { color: var(--err); }
+  .llmstat.dim { color: var(--dim); }
+  #search-results { max-height: 420px; overflow-y: auto; margin-top: 8px; }
+  .hit { border-bottom: 1px solid var(--border); padding: 8px 2px; }
+  .hit .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .hit .score { color: var(--accent); font-weight: 700; font-family: var(--mono); font-size: 12px; }
+  .hit .meta { color: var(--dim); font-size: 11.5px; }
+  .hit .txt { color: var(--dim); font-size: 12px; margin-top: 3px; white-space: pre-line; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📚 DDC Book Pipeline</h1>
+  <span class="pill" id="pill-qdrant"><span class="dot"></span>Qdrant …</span>
+  <span class="pill" id="pill-ollama"><span class="dot"></span>Ollama …</span>
+  <span class="pill" id="pill-gpus" style="margin-left:auto"></span>
+</header>
+
+<main>
+  <!-- GPU power limits: throttle the V100s to stay cool, or let them run flat-out -->
+  <div class="pow-bar" id="gpu-power" style="display:none">
+    <span class="lbl">⚡ Power limits</span>
+    <span class="tag" id="pow-target" style="font-size:11px; color:var(--dim);
+          border:1px solid var(--border); border-radius:4px; padding:1px 6px"></span>
+    <button class="ghost small pow-btn" id="pow-150" onclick="setGpuPower('v100s', 150)"
+            title="throttle both V100s to 150W — lower temps, slower">150W · cool</button>
+    <button class="ghost small pow-btn" id="pow-300" onclick="setGpuPower('v100s', 300)"
+            title="full TDP on both V100s — fastest, hotter">300W · full</button>
+    <button class="ghost small pow-btn" id="pow-default" onclick="setGpuPower('v100s', 'default')"
+            title="factory default limit">default</button>
+    <span id="pow-state" style="color:var(--dim); font-size:12px"></span>
+    <span id="pow-warn" style="color:var(--warn); font-size:12px"></span>
+  </div>
+  <div class="gpus" id="gpus"></div>
+
+  <!-- ─────────────── PIPELINE PROGRESS (live, OCR + indexing) ─────────────── -->
+  <div class="card" id="pipeline-progress" style="margin-bottom:18px">
+    <h2>📈 Pipeline progress <span class="tag">live · works for runs started here or from the CLI</span></h2>
+    <div class="grid" style="margin-top:10px" id="pipeline-cards">
+      <div style="color:var(--dim)">no OCR or indexing progress yet — it appears as soon as a run is going</div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- ─────────────────────────── OCR ─────────────────────────── -->
+    <div class="card">
+      <h2>1 · Ingest: any book format → Parquet <span class="tag">ocr.py · GPU (PDF/DJVU/comics)</span></h2>
+      <div class="desc">PDF (marker OCR, GPU) plus text extractors (EPUB/TXT/RTF/DOCX/HTML/FB2/CHM, CPU) and
+        converter formats (Kindle→EPUB, DOC/ODT→DOCX, DJVU/CBZ/CBR→PDF→OCR).
+        Format is autodetected per file (magic bytes → extension). One parquet per book, one row per page;
+        text-based books get nominal pages of ~words-per-page, breaking only between paragraphs.</div>
+      <label>Book input (any supported format, file or folder)</label>
+      <div class="row">
+        <div><input type="text" id="ocr-input"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('ocr-input')">📂</button></div>
+      </div>
+      <label>Output directory</label>
+      <div class="row">
+        <div><input type="text" id="ocr-output"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('ocr-output')">📂</button></div>
+      </div>
+      <label>GPUs — one worker process per GPU (check one or more)</label>
+      <div id="ocr-gpus" class="gpu-checks"></div>
+      <div id="ocr-gpus-hint" class="sub" style="margin-bottom:10px"></div>
+      <div class="row">
+        <div>
+          <label>Chunk size (pages)</label>
+          <input type="number" id="ocr-chunk" min="1" value="20">
+        </div>
+        <div>
+          <label>Batch multiplier</label>
+          <input type="number" id="ocr-batch" min="1" value="2">
+        </div>
+        <div>
+          <label>Words/page (text-based)</label>
+          <input type="number" id="ocr-wpp" min="50" value="300">
+        </div>
+      </div>
+      <div class="check"><input type="checkbox" id="ocr-resume" checked><label for="ocr-resume" style="margin:0">Resume from checkpoint (conversion_checkpoint.json)</label></div>
+      <details>
+        <summary>Advanced — marker VRAM tuning (P2000 defaults shown as blanks; set to lower OOM)</summary>
+        <div class="row">
+          <div><label>DETECTOR_BATCH_SIZE</label><input type="text" id="env-DETECTOR_BATCH_SIZE" placeholder="1"></div>
+          <div><label>LAYOUT_BATCH_SIZE</label><input type="text" id="env-LAYOUT_BATCH_SIZE" placeholder="1"></div>
+          <div><label>ORDER_BATCH_SIZE</label><input type="text" id="env-ORDER_BATCH_SIZE" placeholder="2"></div>
+        </div>
+        <div class="row">
+          <div><label>RECOGNITION_BATCH_SIZE</label><input type="text" id="env-RECOGNITION_BATCH_SIZE" placeholder="2"></div>
+          <div><label>TABLE_REC_BATCH_SIZE</label><input type="text" id="env-TABLE_REC_BATCH_SIZE" placeholder="1"></div>
+          <div><label>TEXIFY_BATCH_SIZE</label><input type="text" id="env-TEXIFY_BATCH_SIZE" placeholder="2"></div>
+        </div>
+        <div class="row">
+          <div><label>SURYA_OCR_DPI</label><input type="text" id="env-SURYA_OCR_DPI" placeholder="128"></div>
+          <div><label>SURYA_TABLE_DPI</label><input type="text" id="env-SURYA_TABLE_DPI" placeholder="128"></div>
+        </div>
+      </details>
+      <button onclick="startTask('ocr')">▶ Start OCR</button>
+    </div>
+
+    <!-- ─────────────────────────── ENRICH ─────────────────────────── -->
+    <div class="card">
+      <h2>2 · Enrich metadata <span class="tag">enrich_ddc_collection.py · LLM</span></h2>
+      <div class="desc">One LLM call per book adds <code>final_title / authors / publisher / pub_date /
+        ddc / summary</code> to each parquet (in place) and marks TOC/index pages as
+        <code>is_index</code>. Run this <em>before</em> rename — parquets without metadata
+        are skipped there. Re-runs skip books already enriched.</div>
+      <label>Converted books directory</label>
+      <div class="row">
+        <div><input type="text" id="enr-input"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('enr-input')">📂</button></div>
+      </div>
+      <div class="row">
+        <div style="flex:1">
+          <label>Category (optional, e.g. <code>Psychology</code>)</label>
+          <input type="text" id="enr-category" placeholder="(all)">
+        </div>
+        <div>
+          <label>Mode</label>
+          <select id="enr-mode">
+            <option value="exec">Execute (write parquets in place)</option>
+            <option value="dry">Dry run (ask LLM, show, don't write)</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div style="flex:1">
+          <label>LLM endpoint</label>
+          <input type="text" id="enr-api">
+        </div>
+        <div>
+          <label>Model</label>
+          <input type="text" id="enr-model" value="squigFast">
+        </div>
+      </div>
+      <button onclick="startTask('enrich')">▶ Start enrichment</button>
+    </div>
+
+    <!-- ─────────────────────────── RENAME ─────────────────────────── -->
+    <div class="card">
+      <h2>3 · Rename → DDC tree <span class="tag">rename_ddc_collection.py · CPU</span></h2>
+      <div class="desc">Reads metadata from parquets, renames pdf/parquet/images to
+        <code>DDC - title - publisher - author - date</code> and copies into the right DDC folder.</div>
+      <label>Source directory (converted books)</label>
+      <div class="row">
+        <div><input type="text" id="ren-source"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('ren-source')">📂</button></div>
+      </div>
+      <label>Destination DDC root</label>
+      <div class="row">
+        <div><input type="text" id="ren-dest"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('ren-dest')">📂</button></div>
+      </div>
+      <label>Mode</label>
+      <select id="ren-mode">
+        <option value="dry">Dry run (preview only)</option>
+        <option value="exec">Execute (copy + rename for real)</option>
+      </select>
+      <div class="check"><input type="checkbox" id="ren-overwrite"><label for="ren-overwrite" style="margin:0">Overwrite existing destination files (default: skip with COLLISION)</label></div>
+      <button onclick="startTask('rename')">▶ Start rename</button>
+    </div>
+
+    <!-- ─────────────────────────── RECIPES ─────────────────────────── -->
+    <div class="card">
+      <h2>4 · Recipe extraction <span class="tag">extract_recipes.py · LLM</span></h2>
+      <div class="desc">Keyword-filters cookbook pages, then uses an OpenAI-compatible LLM to extract
+        recipes + a deduplicated ingredient index (recipes.parquet / ingredients.parquet).
+        Input must contain the parquet files directly (not recursive — pick a DDC sub-dir, e.g. the 641 cooking folder).</div>
+      <label>Input directory (cookbook parquets)</label>
+      <div class="row">
+        <div><input type="text" id="rec-input"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('rec-input')">📂</button></div>
+      </div>
+      <label>Output directory</label>
+      <div class="row">
+        <div><input type="text" id="rec-output"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('rec-output')">📂</button></div>
+      </div>
+      <label>LLM endpoint 1 (OpenAI-compatible /v1, blank = off)</label>
+      <div class="row">
+        <div><input type="text" id="rec-llm1" placeholder="http://10.90.38.19:8000/v1"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="testLlm(1)">test</button></div>
+      </div>
+      <div class="llmstat dim" id="llm-test-1">not tested</div>
+      <label>LLM endpoint 2 (blank = off)</label>
+      <div class="row">
+        <div><input type="text" id="rec-llm2" placeholder="second server (optional)"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="testLlm(2)">test</button></div>
+      </div>
+      <div class="llmstat dim" id="llm-test-2">not tested</div>
+      <div class="row">
+        <div><label>Model</label><input type="text" id="rec-model" value="squig"></div>
+        <div><label>Max concurrent</label><input type="number" id="rec-conc" min="1" value="8"></div>
+      </div>
+      <div class="row">
+        <div><label>Pages per LLM batch</label><input type="number" id="rec-batch" min="1" value="5"></div>
+        <div><label>Flush interval (recipes)</label><input type="number" id="rec-flush" min="1" value="5"></div>
+        <div><label>Max files (0 = all)</label><input type="number" id="rec-maxfiles" min="0" value="0"></div>
+      </div>
+      <label>Start file (optional)</label>
+      <input type="text" id="rec-startfile" placeholder="045 - Some Book - ... .parquet">
+      <div class="check"><input type="checkbox" id="rec-resume" checked><label for="rec-resume" style="margin:0">Resume from checkpoint</label></div>
+      <button onclick="startTask('recipes')">▶ Start extraction</button>
+    </div>
+
+    <!-- ─────────────────────────── INDEX ─────────────────────────── -->
+    <div class="card">
+      <h2>5 · Qdrant indexing <span class="tag">index_books.py · embeds via Ollama</span></h2>
+      <div class="desc">Embeds all pages (bge-m3) into the <code>ddc-books</code> collection.
+        Idempotent — already-indexed books are skipped, so re-running picks up new books.</div>
+      <label>Library root</label>
+      <div class="row">
+        <div><input type="text" id="idx-root"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end">
+          <button class="ghost small" onclick="browse('idx-root')">📂</button></div>
+      </div>
+      <div class="row">
+        <div><label>Limit (0 = all)</label><input type="number" id="idx-limit" min="0" value="0"></div>
+        <div><label>Embedding model</label><input type="text" id="idx-model" value="bge-m3"></div>
+      </div>
+      <label>Embedding GPU (Ollama)</label>
+      <select id="idx-gpu"></select>
+      <div class="check"><input type="checkbox" id="idx-relocate">
+        <label for="idx-relocate" style="margin:0">Relocate Ollama to this GPU when starting
+          (auto-starts it if down; restarts it if running on another GPU it manages)</label></div>
+      <label>Ollama base URL</label>
+      <input type="text" id="idx-embed-url" value="http://localhost:11434">
+      <label>Qdrant URL</label>
+      <input type="text" id="idx-qdrant-url" value="http://localhost:6333">
+      <div class="check"><input type="checkbox" id="idx-dry"><label for="idx-dry" style="margin:0">Dry run (scan only, no embedding/writes)</label></div>
+      <button onclick="startTask('index')">▶ Start indexing</button>
+    </div>
+
+    <!-- ─────────────────────────── SEARCH ─────────────────────────── -->
+    <div class="card">
+      <h2>🔎 Search the library <span class="tag">Qdrant · bge-m3</span></h2>
+      <div class="desc">Semantic search over every indexed page (embeds your query with the same
+        model, queries Qdrant). Requires Ollama up + Qdrant populated.</div>
+      <label>Query</label>
+      <div class="row">
+        <div><input type="text" id="search-q" placeholder="e.g. how to ferment wine grapes"
+               onkeydown="if(event.key==='Enter')runSearch()"></div>
+        <div style="flex:0 0 auto; display:flex; align-items:flex-end; gap:8px">
+          <input type="number" id="search-k" min="1" max="25" value="8"
+                 title="results" style="width:64px">
+          <button onclick="runSearch()">search</button></div>
+      </div>
+      <div id="search-results"></div>
+    </div>
+
+    <!-- ─────────────────────────── SERVICES ─────────────────────────── -->
+    <div class="card">
+      <h2>Services <span class="tag">Qdrant · Ollama</span></h2>
+      <div class="desc">Start/stop the backing services. Ollama is started on the GPU you pick here —
+        the indexing task always talks to this Ollama, so pick the embedding GPU here.</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:6px">
+        <span style="font-size:12.5px; color:var(--dim)">Qdrant:</span>
+        <button class="ghost small" onclick="qdrant('up')">▲ up</button>
+        <button class="ghost small" onclick="qdrant('down')">▼ down</button>
+        <span id="qdrant-info" style="font-size:12px; color:var(--dim)"></span>
+      </div>
+      <label>Ollama GPU</label>
+      <select id="ollama-gpu"></select>
+      <div class="row">
+        <div><label>OLLAMA_NUM_PARALLEL</label><input type="number" id="ollama-parallel" min="1" value="1"></div>
+        <div><label>Host (bind)</label><input type="text" id="ollama-host" value="0.0.0.0:11434"></div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <button class="ghost small" onclick="ollamaCtl('start')">▶ start ollama</button>
+        <button class="danger small" onclick="ollamaCtl('stop')">■ stop</button>
+        <button class="ghost small" title="kill any ollama server (even one started outside this GUI)"
+                onclick="ollamaCtl('stop-force')">force stop</button>
+        <span id="ollama-info" style="font-size:12px; color:var(--dim)"></span>
+      </div>
+      <label>Pull model</label>
+      <div style="display:flex; gap:8px">
+        <input type="text" id="ollama-pull-model" value="bge-m3">
+        <button class="ghost small" style="margin:0" onclick="ollamaPull()">⬇ pull</button>
+      </div>
+    </div>
+
+    <!-- ─────────────────────── SQUIG LLM (load/unload) ─────────────────────── -->
+    <div class="card" id="squig-card">
+      <h2>🧠 squig LLM <span class="tag">port 8000 · serves OpenCode + OWUI</span></h2>
+      <div class="desc">Unload the model to free the V100 VRAM for OCR work, then reload it.
+        Only one profile can hold port 8000 at a time.
+        <span style="color:var(--warn)">Stopping it also stops the LLM that chat sessions use
+        (<span id="squig-api" style="font-family:monospace"></span>).</span></div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:8px">
+        <span class="pill" id="squig-pill"><span class="dot"></span>…</span>
+        <span id="squig-state" style="font-size:12.5px"></span>
+      </div>
+      <div id="squig-btns" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px"></div>
+      <span id="squig-vram" style="font-size:12px; color:var(--dim)"></span>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:10px">
+        <span style="font-size:12px; color:var(--dim)">log tail</span>
+        <button class="ghost small" onclick="squigLog()">refresh</button>
+      </div>
+      <pre id="squig-log" style="margin:6px 0 0; font-size:11.5px; max-height:180px; overflow:auto;
+           background:rgba(0,0,0,.25); border:1px solid var(--border); border-radius:8px;
+           padding:8px; white-space:pre-wrap"></pre>
+    </div>
+
+  </div>
+
+  <!-- ─────────────────────────── TASKS ─────────────────────────── -->
+  <div class="card" id="tasks">
+    <h2>Tasks</h2>
+    <table>
+      <thead><tr><th>Started</th><th>Task</th><th>Kind</th><th>Status</th><th>Elapsed</th><th>RC</th><th></th></tr></thead>
+      <tbody id="task-rows"><tr><td colspan="7" style="color:var(--dim)">no tasks yet</td></tr></tbody>
+    </table>
+    <div id="logbar" style="margin-top:14px">
+      <select id="log-task" onchange="selectLog(this.value)"><option value="">— log viewer —</option></select>
+      <button class="ghost small" onclick="clearLog()">clear</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<!-- directory browser modal -->
+<div class="modal-bg" id="browse-bg" onclick="if(event.target===this)closeBrowse()">
+  <div class="modal">
+    <div class="pathline" id="browse-path"></div>
+    <div style="color:var(--dim); font-size:12px; margin-top:6px" id="browse-meta"></div>
+    <div class="dirlist" id="browse-list"></div>
+    <div class="modal-foot">
+      <button class="ghost small" onclick="browseUp()">↑ parent</button>
+      <button class="small" style="margin:0" onclick="pickPath()">Use this folder</button>
+      <button class="ghost small" onclick="closeBrowse()">close</button>
+    </div>
+  </div>
+</div>
+
+<div class="flash" id="flash"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let logTask = null, logOffset = 0, logTimer = null;
+let browseTarget = null, browsePath = null;
+
+function flash(msg, cls) {
+  const f = $('flash');
+  f.textContent = msg; f.className = 'flash show ' + (cls || '');
+  clearTimeout(f._t); f._t = setTimeout(() => f.className = 'flash', 5000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts ? { headers: {'Content-Type': 'application/json'}, ...opts } : undefined);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const fmtDur = s => s < 90 ? Math.round(s) + 's' : s < 5400 ? (s/60).toFixed(1) + 'm' : (s/3600).toFixed(1) + 'h';
+const fmtTs = t => new Date(t * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ── services + gpus ────────────────────────────────────────────────
+async function refreshServices() {
+  try {
+    const s = await api('/api/services');
+    const q = $('pill-qdrant'), o = $('pill-ollama');
+    q.innerHTML = `<span class="dot ${s.qdrant.up ? 'ok' : 'err'}"></span>Qdrant ${s.qdrant.up ? (s.qdrant.points != null ? `${s.qdrant.points.toLocaleString()} pts` : 'up') : 'down'}`;
+    $('qdrant-info').textContent = s.qdrant.up ? `v${s.qdrant.version}` : '';
+    const gpuIdx = s.ollama.gpu_smi_index;
+    const gpuName = gpuIdx != null && s.gpus[gpuIdx] ? s.gpus[gpuIdx].name.replace('Tesla ','').replace('Quadro ','') : '?';
+    o.innerHTML = `<span class="dot ${s.ollama.up ? 'ok' : 'err'}"></span>Ollama ${s.ollama.up ? `GPU${gpuIdx} ${gpuName}` : 'down'}`;
+    $('ollama-info').textContent = s.ollama.up
+      ? (s.ollama.managed_alive ? `(managed here) models: ${s.ollama.models.length}` : `(external) models: ${s.ollama.models.length}`)
+      : '';
+    // gpu cards (live power draw / limit + temp, and per-GPU limit buttons)
+    $('gpus').innerHTML = s.gpus.map(g => {
+      const pct = Math.round(100 * g.mem_used_mb / g.mem_total_mb);
+      const pow = [];
+      if (g.power_draw_w != null && g.power_limit_w != null)
+        pow.push(`⚡ ${Math.round(g.power_draw_w)}W / ${Math.round(g.power_limit_w)}W limit`);
+      if (g.temp_c != null) pow.push(Math.round(g.temp_c) + '°C');
+      return `<div class="gpu-card">
+        <div class="name">GPU${g.index} · ${g.name}</div>
+        <div class="sub">${g.mem_free_mb} MiB free of ${g.mem_total_mb} · util ${g.util_pct}% · ${g.pci}</div>
+        <div class="bar"><div class="${pct > 85 ? 'hot' : ''}" style="width:${pct}%"></div></div>
+        ${pow.length ? `<div class="sub" style="margin-top:4px">${pow.join(' · ')}</div>` : ''}
+        ${gpuPowerBtns(g)}
+      </div>`;
+    }).join('') || '<div class="gpu-card"><div class="sub">no GPUs detected</div></div>';
+    $('pill-gpus').innerHTML = s.gpus.length ? `${s.gpus.length} GPU(s)` : 'no GPUs';
+    // power-limit control bar (all V100s at once)
+    {
+      const bar = $('gpu-power');
+      const v100s = s.gpus.filter(g => /v100/i.test(g.name));
+      if (!v100s.length) { bar.style.display = 'none'; }
+      else {
+        bar.style.display = 'flex';
+        $('pow-target').textContent = `${v100s.length}× ${v100s[0].name.replace('Tesla ', '')}`;
+        $('pow-state').textContent = v100s.map(g =>
+          `GPU${g.index} ${Math.round(g.power_limit_w ?? 0)}W` +
+          (g.power_draw_w != null && g.temp_c != null
+           ? ` (draw ${Math.round(g.power_draw_w)}W · ${Math.round(g.temp_c)}°C)` : '')
+        ).join(' · ');
+        const lims = v100s.map(g => Math.round(g.power_limit_w ?? -1));
+        const at = w => lims.length > 0 && lims.every(x => x === w);
+        $('pow-150').classList.toggle('on', at(150));
+        $('pow-300').classList.toggle('on', at(300));
+        $('pow-default').classList.toggle('on', v100s.every(
+          g => Math.round(g.power_limit_w ?? -1) === Math.round(g.power_default_w ?? -2)));
+        const pw = s.power || {};
+        $('pow-warn').textContent = pw.sudo_ok === false
+          ? '⚠ nvidia-smi sudo not passwordless yet — a click will show the one-time fix'
+          : '';
+      }
+    }
+    // fill gpu selects (preserve selection)
+    for (const sel of ['ollama-gpu', 'idx-gpu']) {
+      const cur = $(sel).value;
+      $(sel).innerHTML = '<option value="auto">auto — most free VRAM</option><option value="cpu">CPU</option>' +
+        s.gpus.map(g => `<option value="${g.index}">GPU${g.index} ${g.name} (${g.mem_free_mb} MiB free)</option>`).join('');
+      if ([...$(sel).options].some(o => o.value === cur)) $(sel).value = cur;
+    }
+    // OCR gpu checkboxes (multi-select: one worker per checked GPU)
+    {
+      const el = $('ocr-gpus');
+      const prev = el.dataset.sel ? JSON.parse(el.dataset.sel) : null;
+      const items = ['auto', ...s.gpus.map(g => String(g.index))];
+      el.innerHTML = items.map(v => {
+        const g = v === 'auto' ? null : s.gpus.find(x => String(x.index) === v);
+        const name = g ? g.name.replace('Tesla ', '').replace('Quadro ', '') : 'most free VRAM';
+        const free = g ? `<span class="free">${(g.mem_free_mb / 1024).toFixed(1)} GiB free</span>` : '';
+        return `<label title="one worker process per GPU"><input type="checkbox" value="${v}">
+          ${v === 'auto' ? 'Auto' : 'GPU' + v + ' ' + name} ${free}</label>`;
+      }).join('') || '<span class="dim">no GPUs detected</span>';
+      const sel = prev || (window.__lastOcrGpus || ['auto']);
+      el.dataset.sel = JSON.stringify(sel);
+      for (const cb of el.querySelectorAll('input')) cb.checked = sel.includes(cb.value);
+      el.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateOcrGpuHint));
+      updateOcrGpuHint();
+    }
+    // squig LLM card (vLLM in LXC onecat / llama.cpp on host, port 8000)
+    {
+      const sq = s.squig || {};
+      const state = sq.state || 'stopped';
+      $('squig-pill').innerHTML = `<span class="dot ${state === 'running' ? 'ok' : state === 'starting' ? 'warn' : 'err'}"></span>` +
+        (state === 'running' ? 'LLM up' : state === 'starting' ? 'LLM loading…' : 'LLM down');
+      const bits = [];
+      if (sq.profile) bits.push(`<b>${sq.profile}</b>`);
+      if (sq.served) bits.push(`serving '${sq.served}'`);
+      if (sq.uptime) bits.push(`up ${sq.uptime}`);
+      if (sq.pid) bits.push(`pid ${sq.pid}`);
+      if (state === 'starting') bits.push('weights loading — check log if it stays long');
+      if (state === 'stopped' && sq.container === 'stopped') bits.push(`LXC ${sq.container === 'stopped' ? 'onecat' : ''} stopped`);
+      if (state === 'stopped' && sq.container !== 'stopped') bits.push('no model loaded — V100 VRAM free for OCR');
+      $('squig-state').innerHTML = bits.join(' · ');
+      $('squig-api').textContent = sq.api || '';
+      const last = window.__lastSquig || sq.last || 'squigFastThink';
+      const busy = state !== 'stopped';
+      const contBtn = sq.container === 'stopped'
+        ? `<button class="ghost small" onclick="squigCtl('container-start')"
+             title="start the LXC container first">▲ start LXC container</button>` : '';
+      const stopBtn = `<button class="danger small" ${busy ? '' : 'disabled'}
+        onclick="squigCtl('stop')" title="unload the model — frees the V100s">■ stop / unload</button>`;
+      const startBtns = Object.entries(sq.profiles || {}).map(([name, desc]) =>
+        `<button class="ghost small sq-start ${name === last ? 'on' : ''}" ${busy ? 'disabled' : ''}
+         title="${desc}${name === last ? ' · last loaded' : ''}"
+         onclick="squigCtl('start','${name}')">▶ ${name}</button>`).join('');
+      $('squig-btns').innerHTML = contBtn + stopBtn + startBtns;
+      const v100 = s.gpus.filter(g => /v100/i.test(g.name));
+      $('squig-vram').textContent = v100.length
+        ? `V100 VRAM: ` + v100.map(g => `GPU${g.index} ${(g.mem_used_mb / 1024).toFixed(1)} GB used`).join(' · ')
+        : '';
+      if (state === 'starting' && !$('squig-log').dataset.touched) squigLog();
+    }
+  } catch (e) { console.warn(e); }
+}
+function updateOcrGpuHint() {
+  const sel = [...document.querySelectorAll('#ocr-gpus input:checked')].map(i => i.value);
+  const hint = $('ocr-gpus-hint');
+  if (!hint) return;
+  window.__lastOcrGpus = sel.length ? sel : ['auto'];
+  if (sel.length > 1) {
+    hint.textContent = `${sel.length} workers: the PDF list is split round-robin, each worker gets its own GPU, log, checkpoint shard & progress file — one progress bar combines them. Stop = stop that worker (or all).`;
+  } else {
+    hint.textContent = '';
+  }
+}
+
+// ── gpu power limits (nvidia-smi -pl) ──────────────────────────────
+function gpuPowerBtns(g) {
+  // only cards whose min < max actually accept -pl (e.g. V100s: 150–300W);
+  // a fixed-limit card (P2000) just shows its limit.
+  const lo = g.power_min_w, hi = g.power_max_w;
+  if (lo == null || hi == null || lo >= hi)
+    return g.power_limit_w != null
+      ? `<div class="sub" style="margin-top:4px">limit ${Math.round(g.power_limit_w)}W (fixed by card)</div>` : '';
+  const cur = Math.round(g.power_limit_w ?? -1);
+  const dflt = Math.round(g.power_default_w ?? -2);
+  const opts = [...new Set([Math.round(lo), Math.round(hi)])];
+  const btns = opts.map(w =>
+    `<button class="ghost small pow-btn ${w === cur ? 'on' : ''}"
+       title="set this GPU's power limit" onclick="setGpuPower(${g.index}, ${w})">${w}W</button>`
+  ).join(' ');
+  const defBtn = opts.includes(dflt) ? '' :
+    `<button class="ghost small pow-btn" title="factory limit"
+       onclick="setGpuPower(${g.index}, 'default')">default</button>`;
+  return `<div class="gpu-pow">${btns}${defBtn}</div>`;
+}
+async function setGpuPower(gpu, watts) {
+  try {
+    const r = await api('/api/gpus/power', { method: 'POST',
+      body: JSON.stringify({ gpu, watts }) });
+    if (r.ok) {
+      const lims = Object.entries(r.limits || {})
+        .map(([i, w]) => `GPU${i} → ${Math.round(w)}W`).join(', ');
+      flash(`power: ${lims || 'ok'} — saved, re-applied at reboot`, 'ok');
+    } else flash('power: ' + (r.error || 'failed'), 'err');
+    setTimeout(refreshServices, 700);
+  } catch (e) { flash('power: ' + e.message, 'err'); }
+}
+
+// ── pipeline progress (OCR + indexing: where it is / how far / ETA) ──
+const fmtEta = s => {
+  if (s == null) return null;
+  if (s < 90) return Math.round(s) + 's';
+  if (s < 5400) return Math.round(s / 60) + ' min';
+  if (s < 15 * 3600) return (s / 3600).toFixed(1) + ' h';
+  return Math.round(s / 3600) + ' h';
+};
+const num = v => v == null ? '—' : v.toLocaleString();
+function ppCard(kind, d) {
+  const isSharded = !!(d.workers && d.workers.length > 1);
+  const title = kind === 'indexer' ? '4 · Qdrant indexing' : '1 · OCR: PDF → Parquet';
+  const where = kind === 'indexer' ? (d.root || '').split('/').pop() : (d.output || '').split('/').pop();
+  const stateCls = d.state === 'running' ? 'running' : d.state;
+  const stateTxt = d.state === 'running' ? (d.active ? 'RUNNING' : 'QUIET') : d.state.toUpperCase();
+  const workersTag = isSharded
+    ? ` <span class="pp-state running" style="font-size:11px">×${d.workers.length} workers</span>` : '';
+  const sub = kind === 'indexer'
+    ? `book ${num(d.done_books)} / ${num(d.total_books)}${d.pct_items != null ? ` · ${d.pct_items}%` : ''}`
+    : `file ${num(d.done_files)} / ${num(d.total_files)}${d.pct_items != null ? ` · ${d.pct_items}%` : ''}${d.failed_files ? ` · ${d.failed_files} failed` : ''}`;
+  const pagesLine = (d.total_pages != null && d.pct_pages != null)
+    ? `pages ${num(d.pages_done)} / ${num(d.total_pages)} · ${d.pct_pages}%${d.remaining_pages != null ? ` · ${num(d.remaining_pages)} left` : ''}`
+    : (kind === 'indexer' ? 'page-level tracking (needs the updated index_books.py)' : 'page count unavailable');
+  const nowLine = d.current
+    ? (kind === 'indexer'
+        ? `now: ${esc(d.current)}${d.current_pages ? ` · page ${num(d.current_pages_done)}/${num(d.current_pages)}` : ''}`
+        : `now: ${esc(d.current)}${d.current_file_pages != null && d.current_pages ? ` · page ${num(d.current_pages_done)}/${num(d.current_pages)}` : ''}`)
+    : '';
+  const workersBlock = isSharded
+    ? `<div class="pp-meta" style="margin-top:6px">` + d.workers.map(w => {
+        const gpu = w.gpu != null ? `GPU${w.gpu}` : 'CPU';
+        const pos = w.pages ? ` · page ${num(w.pages_done)}/${num(w.pages)}` : '';
+        const st = w.state !== 'running' ? ` <span class="dim">(${w.state})</span>` : '';
+        return `<div>${gpu} · ${esc(w.file || '(idle)')}${pos}<span class="dim" style="float:right">${w.age_s}s ago</span>${st}</div>`;
+      }).join('') + `</div>` : '';
+  const pace = [];
+  if (d.pace_pages_per_min != null) pace.push(`${d.pace_pages_per_min} pages/min${isSharded ? ' (all workers)' : ''}`);
+  if (d.pace_books_per_min != null) pace.push(`${d.pace_books_per_min} books/min`);
+  const eta = d.eta_s != null ? `ETA ~${fmtEta(d.eta_s)}${d.eta_basis ? ` (${d.eta_basis} pace)` : ''}` : 'ETA —';
+  const counts = (d.counts && Object.keys(d.counts).length)
+    ? Object.entries(d.counts).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
+  const barPct = d.pct_pages != null ? d.pct_pages : (d.pct_items || 0);
+  const barCls = d.state === 'done' ? 'ok' : (d.state === 'stalled' ? 'warn' : '');
+  return `<div class="card">
+    <h2>${title}${workersTag} <span class="pp-state ${stateCls}">${stateTxt}</span>
+      <span class="tag" style="margin-left:auto">${esc(where || d.file || '')} · updated ${Math.max(0, Math.round((Date.now()/1000) - (d.last_update || 0)))}s ago</span></h2>
+    <div class="pbar ${barCls}"><div style="width:${Math.min(100, barPct)}%"></div><span>${barPct}%</span></div>
+    <div class="pp-meta"><b>${sub}</b><br><span class="dim">${pagesLine}</span></div>
+    ${nowLine ? `<div class="pp-meta">${nowLine}</div>` : ''}
+    ${workersBlock}
+    <div class="pp-meta"><span class="dim">pace: ${pace.length ? pace.join(' · ') : 'warming up…'} · ${eta}</span></div>
+    ${counts ? `<div class="pp-meta"><span class="dim">${counts}</span></div>` : ''}
+    ${d.note ? `<div class="pp-meta"><span class="dim">${esc(d.note)}</span></div>` : ''}
+  </div>`;
+}
+async function refreshPipeline() {
+  try {
+    const j = await api('/api/pipeline');
+    const cards = [];
+    if (j.indexer) cards.push(ppCard('indexer', j.indexer));
+    for (const o of j.ocr || []) cards.push(ppCard('ocr', o));
+    $('pipeline-cards').innerHTML = cards.length
+      ? cards.join('')
+      : '<div style="color:var(--dim)">idle — no OCR or indexing in progress (progress appears here as soon as a run goes, from the GUI or the CLI)</div>';
+  } catch (e) { console.warn(e); }
+}
+
+// ── tasks ──────────────────────────────────────────────────────────
+async function refreshTasks() {
+  const tasks = await api('/api/tasks');
+  $('task-rows').innerHTML = tasks.length ? tasks.map(t => `
+    <tr>
+      <td>${fmtTs(t.started_at)}</td>
+      <td>${t.label}${t.progress ? `<div class="tprog"><div style="width:${t.progress.pct}%"></div><span>${t.progress.current}/${t.progress.total} · ${t.progress.pct}%${t.progress.eta_s ? ' · ~' + fmtEta(t.progress.eta_s) : ''}</span></div>${t.progress.current_item ? `<div class="dim" style="font-size:11px;margin-top:2px;color:var(--dim)">now: ${esc(t.progress.current_item)}</div>` : ''}` : ''}</td>
+      <td>${t.kind}</td>
+      <td><span class="st ${t.status}">${t.status}</span></td>
+      <td>${fmtDur(t.elapsed_s)}</td>
+      <td>${t.returncode ?? ''}</td>
+      <td style="white-space:nowrap">
+        ${t.status === 'running' ? `<button class="danger small" onclick="stopTask('${t.id}')">stop</button>` : ''}
+        <button class="ghost small" onclick="selectLog('${t.id}')">log</button>
+      </td>
+    </tr>`).join('')
+    : '<tr><td colspan="7" style="color:var(--dim)">no tasks yet</td></tr>';
+  const sel = $('log-task');
+  if (![...sel.options].some(o => o.value === logTask)) {
+    sel.innerHTML = '<option value="">— log viewer —</option>' +
+      tasks.map(t => `<option value="${t.id}">${t.label} [${t.status}]</option>`).join('');
+  }
+  if (logTask) sel.value = logTask;
+}
+async function stopTask(id) {
+  await api(`/api/tasks/${id}/stop`, { method: 'POST' });
+  flash('stop signal sent');
+}
+function selectLog(id) {
+  logTask = id; logOffset = 0;
+  $('log').textContent = '';
+  if (logTimer) clearInterval(logTimer);
+  pollLog();
+  logTimer = setInterval(pollLog, 1500);
+}
+function clearLog() { $('log').textContent = ''; logOffset = 0; }
+async function pollLog() {
+  if (!logTask) return;
+  try {
+    const j = await api(`/api/tasks/${logTask}/log?after=${logOffset}`);
+    if (j.chunk) { $('log').textContent += j.chunk; logOffset = j.size;
+                   $('log').scrollTop = $('log').scrollHeight; }
+    if (j.done) { clearInterval(logTimer); logTimer = null; }
+  } catch (e) { console.warn(e); }
+}
+
+// ── start tasks ────────────────────────────────────────────────────
+async function startTask(kind) {
+  let p = {};
+  try {
+    if (kind === 'ocr') {
+      const gpus = [...document.querySelectorAll('#ocr-gpus input:checked')].map(i => i.value);
+      p = { input: $('ocr-input').value.trim(), output: $('ocr-output').value.trim(),
+            gpus: gpus.length ? gpus : ['auto'],
+            chunk: +$('ocr-chunk').value, batch: +$('ocr-batch').value,
+            words_per_page: +$('ocr-wpp').value || 300,
+            resume: $('ocr-resume').checked, env: {} };
+      for (const el of document.querySelectorAll('[id^=env-]'))
+        p.env[el.id.slice(4)] = el.value.trim();
+    } else if (kind === 'enrich') {
+      p = { input: $('enr-input').value.trim(), category: $('enr-category').value.trim(),
+            dry_run: $('enr-mode').value === 'dry',
+            api_base: $('enr-api').value.trim(), model: $('enr-model').value.trim() };
+    } else if (kind === 'rename') {
+      p = { source: $('ren-source').value.trim(), dest: $('ren-dest').value.trim(),
+            execute: $('ren-mode').value === 'exec', overwrite: $('ren-overwrite').checked };
+      if (p.execute && !confirm('Execute mode copies + renames files for real. Continue?\n' +
+        (p.overwrite ? '(will overwrite existing destination files)'
+                     : '(books whose destination already exists are skipped)'))) return;
+    } else if (kind === 'recipes') {
+      p = { input: $('rec-input').value.trim(), output: $('rec-output').value.trim(),
+            llm_base_1: $('rec-llm1').value.trim(), llm_base_2: $('rec-llm2').value.trim(),
+            llm_model: $('rec-model').value.trim(), max_concurrent: +$('rec-conc').value,
+            batch_size: +$('rec-batch').value, flush_interval: +$('rec-flush').value,
+            max_files: $('rec-maxfiles').value.trim(), start_file: $('rec-startfile').value.trim(),
+            resume: $('rec-resume').checked };
+    } else if (kind === 'index') {
+      p = { root: $('idx-root').value.trim(), limit: +$('idx-limit').value || 0,
+            dry_run: $('idx-dry').checked, embed_model: $('idx-model').value.trim(),
+            embed_base_url: $('idx-embed-url').value.trim(), qdrant_url: $('idx-qdrant-url').value.trim(),
+            ollama_gpu: $('idx-gpu').value, relocate_ollama: $('idx-relocate').checked };
+      if (p.relocate_ollama && !p.dry_run && !confirm('Relocate Ollama to the selected GPU?\n' +
+        'If it is already serving embeddings for another task this restarts it (brief gap).')) return;
+    }
+    const r = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ kind, params: p }) });
+    const tasks = r.tasks || [r];
+    flash(tasks.length > 1
+      ? `${tasks.length} workers started: ${tasks.map(t => t.label).join('  +  ')}`
+      : `started: ${tasks[0].label}`, 'ok');
+    selectLog(tasks[0].id);
+    refreshTasks();
+  } catch (e) { flash('error: ' + e.message, 'err'); }
+}
+async function ollamaCtl(action) {
+  try {
+    const r = await api('/api/services/ollama', { method: 'POST',
+      body: JSON.stringify({ action, gpu: $('ollama-gpu').value,
+                             num_parallel: +$('ollama-parallel').value,
+                             host: $('ollama-host').value.trim() }) });
+    flash(`ollama ${action}: ${r.status}${r.gpu_smi_index != null ? ` (GPU${r.gpu_smi_index})` : ''}`, 'ok');
+    setTimeout(refreshServices, 1500);
+  } catch (e) { flash('error: ' + e.message, 'err'); }
+}
+async function ollamaPull() {
+  try {
+    const r = await api('/api/tasks', { method: 'POST',
+      body: JSON.stringify({ kind: 'ollama_pull', params: { model: $('ollama-pull-model').value.trim() } }) });
+    const t = (r.tasks || [r])[0];
+    flash(`started: ${t.label}`, 'ok'); selectLog(t.id); refreshTasks();
+  } catch (e) { flash('error: ' + e.message, 'err'); }
+}
+async function qdrant(action) {
+  try {
+    await api('/api/services/qdrant', { method: 'POST', body: JSON.stringify({ action }) });
+    flash(`qdrant ${action} requested`, 'ok');
+    setTimeout(refreshServices, 3000);
+  } catch (e) { flash('error: ' + e.message, 'err'); }
+}
+// ── squig LLM (load / unload the model on port 8000) ─────────────────
+async function squigCtl(action, profile) {
+  try {
+    const r = await api('/api/squig-llm', { method: 'POST',
+      body: JSON.stringify({ action, profile }) });
+    if (r.ok) {
+      if (action === 'start') {
+        window.__lastSquig = profile;
+        flash(`loading ${profile} — V100s are re-claimed in a minute or two`, 'ok');
+        squigLog();
+      } else if (action === 'stop')
+        flash(`unloaded ${r.profile || 'model'}${r.freed_mb ? ` — freed ${Math.round(r.freed_mb / 1024)} GB VRAM` : ''} (V100s free for OCR)`, 'ok');
+      else flash('LXC container start requested', 'ok');
+    } else flash('squig: ' + (r.error || 'failed'), 'err');
+    setTimeout(refreshServices, 800);
+  } catch (e) { flash('squig: ' + e.message, 'err'); }
+}
+async function squigLog() {
+  try {
+    const r = await api('/api/squig-llm/log?lines=14');
+    $('squig-log').dataset.touched = '1';
+    $('squig-log').textContent = (r.lines || []).join('\n')
+      || '(no log yet — nothing loaded/unloaded via the dashboard)';
+  } catch (e) { $('squig-log').textContent = 'log: ' + e.message; }
+}
+async function runSearch() {
+  const q = $('search-q').value.trim();
+  if (!q) return;
+  const box = $('search-results');
+  box.innerHTML = '<div style="color:var(--dim)">searching…</div>';
+  try {
+    const j = await api('/api/search', { method: 'POST',
+      body: JSON.stringify({ query: q, top_k: +$('search-k').value || 8 }) });
+    box.innerHTML = j.results.length ? j.results.map(r => `
+      <div class="hit">
+        <div class="top">
+          <span class="score">${r.score}</span>
+          <span><b>${esc(r.book_title)}</b> · p. ${r.page_num}</span>
+          <span class="meta">${esc(r.ddc ?? '')}${r.ddc_coarse ? ' · ' + esc(r.ddc_coarse) : ''}${r.pub_date ? ' · ' + esc(r.pub_date) : ''}</span>
+        </div>
+        <div class="txt">${esc(r.text)}</div>
+      </div>`).join('') : '<div style="color:var(--dim)">no results</div>';
+  } catch (e) { box.innerHTML = '<div style="color:var(--err)">' + esc(e.message) + '</div>'; }
+}
+async function testLlm(which) {
+  const url = $(which === 1 ? 'rec-llm1' : 'rec-llm2').value.trim().replace(/\/+$/, '');
+  const el = $('llm-test-' + which);
+  if (!url) { el.textContent = 'blank = off'; el.className = 'llmstat dim'; return; }
+  el.textContent = 'testing…'; el.className = 'llmstat dim';
+  try {
+    const r = await fetch('/api/llm-test?url=' + encodeURIComponent(url));
+    const j = await r.json();
+    if (j.ok) {
+      el.textContent = `✓ up — models: ${j.models.slice(0, 4).join(', ')}${j.models.length > 4 ? '…' : ''}`;
+      el.className = 'llmstat ok';
+    } else { el.textContent = '✗ ' + j.error; el.className = 'llmstat err'; }
+  } catch (e) { el.textContent = '✗ ' + e.message; el.className = 'llmstat err'; }
+}
+
+// ── directory browser ──────────────────────────────────────────────
+function browse(id) { browseTarget = id; openBrowse(document.getElementById(id).value || '/home/matt'); }
+function openBrowse(path) { browsePath = path; loadBrowse(path); $('browse-bg').style.display = 'flex'; }
+function closeBrowse() { $('browse-bg').style.display = 'none'; }
+function browseUp() { if (browsePath) openBrowse(browsePath.replace(/\/[^/]+$/, '') || '/'); }
+function pickPath() { $(browseTarget).value = browsePath; closeBrowse(); }
+async function loadBrowse(path) {
+  $('browse-path').textContent = path;
+  $('browse-list').innerHTML = 'loading…';
+  try {
+    const j = await api('/api/browse?path=' + encodeURIComponent(path));
+    $('browse-meta').textContent =
+      `${j.pdfs} pdf, ${j.parquets} parquet here · ${j.dirs.length} subdirs`;
+    $('browse-list').innerHTML = j.dirs.map(d =>
+      `<div onclick="openBrowse('${browsePath.replace(/\\/g,'\\\\')}/${d.replace(/'/g,"\\'")}')">📁 ${d}</div>`).join('')
+      || '<div style="color:var(--dim)">no subdirectories</div>';
+  } catch (e) { $('browse-list').innerHTML = '<div style="color:var(--err)">' + e.message + '</div>'; }
+}
+
+// ── boot ───────────────────────────────────────────────────────────
+async function fillConfig() {
+  const c = await api('/api/config');
+  // OCR GPUs are checkboxes (one worker per checked GPU) built later by
+  // refreshServices — it picks up window.__lastOcrGpus. Config may hold the
+  // new c.ocr.gpus array or the legacy single c.ocr.gpu string.
+  window.__lastOcrGpus = (Array.isArray(c.ocr.gpus) && c.ocr.gpus.length)
+    ? c.ocr.gpus : (c.ocr.gpu ? [String(c.ocr.gpu)] : ['auto']);
+  // squig LLM: highlight the profile last loaded in the dashboard
+  window.__lastSquig = (c.squig && c.squig.last) || 'squigFastThink';
+  $('ocr-input').value = c.ocr.input; $('ocr-output').value = c.ocr.output;
+  $('ocr-chunk').value = c.ocr.chunk;
+  $('ocr-batch').value = c.ocr.batch; $('ocr-resume').checked = !!c.ocr.resume;
+  for (const [k, v] of Object.entries(c.ocr.env || {})) { const el = $('env-' + k); if (el) el.value = v; }
+  $('ren-source').value = c.rename.source; $('ren-dest').value = c.rename.dest;
+  $('ren-mode').value = c.rename.execute ? 'exec' : 'dry';
+  $('ren-overwrite').checked = !!c.rename.overwrite;
+  const e = Object.assign({ input: '/home/matt/converted', category: '', dry_run: false,
+                            api_base: 'http://10.90.38.19:8000/v1', model: 'squigFast' }, c.enrich);
+  $('enr-input').value = e.input; $('enr-category').value = e.category;
+  $('enr-mode').value = e.dry_run ? 'dry' : 'exec';
+  $('enr-api').value = e.api_base; $('enr-model').value = e.model;
+  $('rec-input').value = c.recipes.input; $('rec-output').value = c.recipes.output;
+  $('rec-llm1').value = c.recipes.llm_base_1; $('rec-llm2').value = c.recipes.llm_base_2;
+  $('rec-model').value = c.recipes.llm_model; $('rec-conc').value = c.recipes.max_concurrent;
+  $('rec-batch').value = c.recipes.batch_size; $('rec-flush').value = c.recipes.flush_interval;
+  $('rec-maxfiles').value = c.recipes.max_files || 0; $('rec-startfile').value = c.recipes.start_file;
+  $('rec-resume').checked = !!c.recipes.resume;
+  $('idx-root').value = c.index.root; $('idx-limit').value = c.index.limit || 0;
+  $('idx-dry').checked = !!c.index.dry_run; $('idx-model').value = c.index.embed_model;
+  $('idx-embed-url').value = c.index.embed_base_url; $('idx-qdrant-url').value = c.index.qdrant_url;
+  $('idx-gpu').value = c.index.ollama_gpu || 'auto'; $('idx-relocate').checked = !!c.index.relocate_ollama;
+  $('ollama-gpu').value = c.ollama.gpu; $('ollama-parallel').value = c.ollama.num_parallel;
+  $('ollama-host').value = c.ollama.host; $('ollama-pull-model').value = c.ollama.pull_model;
+}
+(async () => {
+  await fillConfig();
+  refreshServices(); refreshTasks(); refreshPipeline();
+  setInterval(refreshServices, 5000);
+  setInterval(refreshTasks, 2500);
+  setInterval(refreshPipeline, 5000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+#!/bin/bash
+
+lxc exec onecat -- bash -lc '
+export CUDA_VISIBLE_DEVICES=0,1
+
+/opt/onecat-venv/bin/python -m vllm.entrypoints.openai.api_server \
+  --model /models/qwen3.8-27b \
+  --served-model-name squigFast \
+  --trust-remote-code \
+  --tensor-parallel-size 2 \
+  --attention-backend FLASH_ATTN_V100 \
+  --kv-cache-dtype fp8 \
+  --max-model-len 150000 \
+  --max-num-seqs 1 \
+  --gpu-memory-utilization 0.90 \
+  --enable-auto-tool-choice \
+  --tool-call-parser qwen3_coder \
+  --reasoning-parser qwen3 \
+  --no-enable-prefix-caching \
+  --enable-prefix-caching \
+  --enable-prefix-caching \
+  --default-chat-template-kwargs '\''{"enable_thinking":true}'\'' \
+  --speculative-config '\''{"method":"dflash","model":"/models/qwen3.8-dflash2","revision":"dedf8df68adfb1afeaf7b7480c0a0243108177b4","kv_cache_dtype":"auto"}'\'' \
+  --host 0.0.0.0 \
+  --port 8000
+'
+
