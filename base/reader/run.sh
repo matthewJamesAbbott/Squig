@@ -6,7 +6,7 @@
 #
 # The bridge (ddc_owui.py) exposes /v1/models + /v1/chat/completions
 # (OpenAI-compatible, registers the ddc-library model in OWUI) and /mcp
-# (streamable-HTTP MCP with the five library tools).
+# (streamable-HTTP MCP with the 13 DDC library tools).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${PIPELINE_PYTHON:-$HOME/miniconda3/envs/marker_env/bin/python}"

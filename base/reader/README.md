@@ -206,10 +206,11 @@ embedder at all — handy when the GPU is busy or down).
 
 ### MCP server — native tools for LLM agents
 
-`mcp_server.py` (stdio) exposes the API as twelve tools: `search_library`,
+`mcp_server.py` (stdio) exposes the API as thirteen tools: `search_library`,
 `ask_library`, `get_chunk`, `get_source`, `library_status`, `browse_ddc`
 (the DDC section tree, or the books in a section), `find_books` (catalog
 search by title/author), `get_page` (full text of one page of a book),
+`rescan_library` (force an immediate catalog re-scan),
 `log_hit` (record a hit in the MySQL research log — see below),
 `hits_recall` (query that log), `hits_pending` (the loop's `needs-verify`
 frontier, FIFO) and `hits_mark` (advance a hit: status/confidence/note/refs).
@@ -354,7 +355,7 @@ port 8072:
 | --- | --- |
 | `GET /v1/models` | OpenAI model list — registers **`ddc-library`** in the OWUI model picker |
 | `POST /v1/chat/completions` | OpenAI chat (streaming + not) → the reader's `/v1/chat` — the **agent** (reasons between searches, cited answer). Pick `ddc-library` from the model dropdown and chat — no function-calling needed. Set `DDC_OWUI_AGENT=0` to fall back to the one-shot `/v1/ask` |
-| `POST /mcp` | streamable-HTTP MCP with the same twelve tools as `mcp_server.py` — toggle them in any squigFast chat |
+| `POST /mcp` | streamable-HTTP MCP with the same thirteen tools as `mcp_server.py` — toggle them in any squigFast chat |
 | `POST /` | the same MCP endpoint at the URL root (OWUI gotcha below) |
 | `GET /info` / `GET /healthz` | service info / health |
 
@@ -367,13 +368,13 @@ config and only adds what's missing):
 
 ```bash
 ~/base/reader/run.sh owui start
-/home/matt/miniconda3/envs/marker_env/bin/python ~/base/reader/owui_register.py \
+python3 ~/squig/scripts/owui_register.py \
     --key <OWUI admin API key>        # Settings -> Profile -> API Keys -> New
 ```
 
 This adds: (1) an OpenAI (API key) connection at `http://172.17.0.1:8072/v1`
 so `ddc-library` appears in the model picker, and (2) an MCP tool-server
-connection at `http://172.17.0.1:8072/mcp` so the twelve tools appear in the
+connection at `http://172.17.0.1:8072/mcp` so the thirteen tools appear in the
 tools menu. (From inside the OWUI container the host is the Docker bridge
 gateway `172.17.0.1`; from the host itself use `127.0.0.1:8072`.) Manual
 equivalent: OWUI admin → Settings → Connections → add an *OpenAI (API key)*

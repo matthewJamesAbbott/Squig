@@ -1,4 +1,4 @@
-#!/home/matt/miniconda3/envs/marker_env/bin/python
+#!/usr/bin/env python3
 """Register the DDC library with Open WebUI via its admin API.
 
 Registers both native extension points (OWUI 0.13.x has no addon framework):
@@ -7,8 +7,10 @@ Registers both native extension points (OWUI 0.13.x has no addon framework):
      Adds a "ddc-library" model to the OWUI model picker. Chatting with it
      runs the reader's /v1/ask (hybrid retrieval + cited answer).
   2. MCP tool-server connection  -> http://172.17.0.1:8072/mcp
-     The five library tools (search_library, ask_library, get_chunk,
-     get_source, library_status) become toggleable in any chat.
+     All 13 DDC tools (search_library, ask_library, get_chunk, get_source,
+     library_status, browse_ddc, find_books, get_page, rescan_library,
+     log_hit, hits_recall, hits_pending, hits_mark) become toggleable in
+     any chat.
 
 Idempotent: re-running detects the existing entries and leaves them alone.
 
@@ -131,7 +133,7 @@ def main():
           [(c.get("type"), (c.get("info") or {}).get("id") or c.get("url"))
            for c in ts])
     print("\ndone. In OWUI: the 'ddc-library' model should now appear in the "
-          "model picker; the 5 DDC tools appear in the tools menu of any chat.")
+          "model picker; the 13 DDC tools appear in the tools menu of any chat.")
 
 
 if __name__ == "__main__":

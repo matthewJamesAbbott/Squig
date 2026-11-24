@@ -164,7 +164,7 @@ parsed from `content` (not `reasoning`).
 | **Reader** | <http://localhost:8071> | Browse / read / ask / search UI |
 | **Machine API** | <http://localhost:8071/v1> | Stable versioned endpoints: `/v1/search`, `/v1/ask`, `/v1/chat` (agent), `/v1/books` (catalog), `/v1/page/{book_id}/{n}`, `/v1/chunk/{id}`, `/v1/source/{id}`, `/v1/status`, `/v1/index/*`, `/v1/hits*`, `POST /v1/rescan` |
 | **OWUI bridge** | <http://localhost:8072> | `ddc-library` in the Open WebUI model picker (`/v1/models`, `/v1/chat/completions`) + the 13 MCP tools over streamable HTTP (`POST /mcp` and `POST /`); from inside the OWUI container use `http://172.17.0.1:8072` |
-| **Open WebUI** | <http://localhost:3000> | Docker container; pick the `ddc-library` model or toggle the 13 `ddc` tools in any chat (registration: `owui_register.py`) |
+| **Open WebUI** | <http://localhost:3000> | Docker container; pick the `ddc-library` model or toggle the 13 `ddc` tools in any chat (registration: `scripts/owui_register.py`) |
 | Qdrant | <http://localhost:6333> | `ddc-books`: 1024-d cosine + BM25 text index |
 | Ollama (GPU index worker) | <http://localhost:11434> | bge-m3 embeddings for the indexer, on the P2000 |
 | Ollama (CPU query worker) | <http://localhost:11435> | keeps interactive search ~0.2 s while the indexer runs (falls back to the GPU worker; `keyword` mode needs neither) |
