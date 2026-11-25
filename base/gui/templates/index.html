@@ -561,7 +561,7 @@ async function refreshServices() {
       el.dataset.sel = JSON.stringify(sel);
       for (const cb of el.querySelectorAll('input')) cb.checked = sel.includes(cb.value);
       el.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateOcrGpuHint));
-      updateOcrGpuHint();
+      updateOcrGpuHint(true);  // re-render pass: sync state, don't re-persist
     }
     // squig LLM card (vLLM in LXC onecat / llama.cpp on host, port 8000)
     {
@@ -599,11 +599,23 @@ async function refreshServices() {
     }
   } catch (e) { console.warn(e); }
 }
-function updateOcrGpuHint() {
+function updateOcrGpuHint(fromRender) {
+  const el = $('ocr-gpus');
   const sel = [...document.querySelectorAll('#ocr-gpus input:checked')].map(i => i.value);
   const hint = $('ocr-gpus-hint');
+  const norm = sel.length ? sel : ['auto'];
+  // Keep the dataset (which the poll-time re-render reads) in sync with the
+  // user's latest action — if it goes stale, the next 5 s poll reverts the
+  // checkboxes to the config default. Persist to the config (change-only)
+  // so a page reload restores the same selection.
+  if (el) el.dataset.sel = JSON.stringify(norm);
+  window.__lastOcrGpus = norm;
+  if (!fromRender && JSON.stringify(norm) !== window.__savedOcrGpus) {
+    window.__savedOcrGpus = JSON.stringify(norm);
+    api('/api/config', { method: 'POST',
+      body: JSON.stringify({ ocr: { gpus: norm } }) }).catch(() => {});
+  }
   if (!hint) return;
-  window.__lastOcrGpus = sel.length ? sel : ['auto'];
   if (sel.length > 1) {
     hint.textContent = `${sel.length} workers: the PDF list is split round-robin, each worker gets its own GPU, log, checkpoint shard & progress file — one progress bar combines them. Stop = stop that worker (or all).`;
   } else {
@@ -915,6 +927,9 @@ async function fillConfig() {
   // new c.ocr.gpus array or the legacy single c.ocr.gpu string.
   window.__lastOcrGpus = (Array.isArray(c.ocr.gpus) && c.ocr.gpus.length)
     ? c.ocr.gpus : (c.ocr.gpu ? [String(c.ocr.gpu)] : ['auto']);
+  // seed the "already saved" marker so the first render pass doesn't
+  // immediately re-POST the config we just loaded.
+  window.__savedOcrGpus = JSON.stringify(window.__lastOcrGpus);
   // squig LLM: highlight the profile last loaded in the dashboard
   window.__lastSquig = (c.squig && c.squig.last) || 'squigFastThink';
   $('ocr-input').value = c.ocr.input; $('ocr-output').value = c.ocr.output;
