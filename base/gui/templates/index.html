@@ -668,7 +668,12 @@ const num = v => v == null ? '—' : v.toLocaleString();
 function ppCard(kind, d) {
   const isSharded = !!(d.workers && d.workers.length > 1);
   const title = kind === 'indexer' ? '4 · Qdrant indexing' : '1 · OCR: PDF → Parquet';
-  const where = kind === 'indexer' ? (d.root || '').split('/').pop() : (d.output || '').split('/').pop();
+  // "input → output" in the header: two concurrent runs that share an
+  // output dir each get their own card and must stay distinguishable.
+  const where = kind === 'indexer'
+    ? (d.root || '').split('/').pop()
+    : [(d.input || '').split('/').pop(), (d.output || '').split('/').pop()]
+       .filter(Boolean).join(' → ');
   const stateCls = d.state === 'running' ? 'running' : d.state;
   const stateTxt = d.state === 'running' ? (d.active ? 'RUNNING' : 'QUIET') : d.state.toUpperCase();
   const workersTag = isSharded

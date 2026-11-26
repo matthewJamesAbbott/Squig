@@ -157,6 +157,26 @@ def load_shard_checkpoints(output_dir: Path) -> dict:
     return state
 
 def save_checkpoint(path: Path, state: dict):
+    # The BASE checkpoint is shared by every unsharded run that targets the
+    # same output dir. Two such runs started concurrently (different inputs,
+    # same output) each hold a startup snapshot; a plain overwrite would drop
+    # the sibling's new completions (lost -> re-OCRed on the next resume).
+    # Merge the on-disk state before writing; our own entries win conflicts.
+    # Shard files (.g<i>) are written by one worker only — no merge needed.
+    if path.name == CHECKPOINT_FILE:
+        try:
+            on_disk = load_checkpoint(path)
+        except Exception:
+            on_disk = {"completed": [], "failed": [], "partial": {}}
+        for k in on_disk.get("completed", []):
+            if k not in state["completed"]:
+                state["completed"].append(k)
+        for k in on_disk.get("failed", []):
+            if k not in state["failed"]:
+                state["failed"].append(k)
+        merged_partial = dict(on_disk.get("partial", {}))
+        merged_partial.update(state.get("partial", {}))
+        state["partial"] = merged_partial
     # with_name (not with_suffix): shard files like conversion_checkpoint.json.g0
     # must not all share one .tmp name, or concurrent saves race on the rename.
     tmp = path.with_name(path.name + ".tmp")
@@ -171,13 +191,19 @@ def save_checkpoint(path: Path, state: dict):
 PROGRESS_DIR = Path(os.environ.get(
     "DDC_PROGRESS_DIR", str(Path.home() / ".ddc-progress")))
 
-def progress_path_for(output_dir: Path, shard: "tuple | None" = None) -> Path:
-    """One progress file per output dir: ~/.ddc-progress/ocr_<outdir>.json.
+def progress_path_for(output_dir: Path, shard: "tuple | None" = None,
+                      explicit: "str | None" = None) -> Path:
+    """Where this run's live progress file lives.
 
-    A sharded (multi-GPU) worker gets its own file, ocr_<outdir>_g<i>.json —
-    the dashboard groups them by the shared base name and sums them into one
+    Explicit path wins (the GUI passes one per task, so concurrent runs that
+    share an output dir can't overwrite each other's progress). Otherwise one
+    progress file per output dir: ~/.ddc-progress/ocr_<outdir>.json. A sharded
+    (multi-GPU) worker gets its own file, ocr_<outdir>_g<i>.json — the
+    dashboard groups them by the shared base name and sums them into one
     card. Unsharded runs keep the plain name (back-compat with older runs).
     """
+    if explicit:
+        return Path(explicit).expanduser()
     slug = re.sub(r"[^A-Za-z0-9]+", "_", output_dir.name).strip("_") or "out"
     if shard:
         return PROGRESS_DIR / f"ocr_{slug}_g{shard[0]}.json"
@@ -795,6 +821,12 @@ def main():
                              "(the GUI generates one). Recorded in the progress "
                              "file so the dashboard merges exactly this job's "
                              "shards into one card — even shards that finish early.")
+    parser.add_argument("--progress-file", default=None, metavar="PATH",
+                        help="explicit path for this run's live progress file "
+                             "(the GUI passes a per-task path so concurrent runs "
+                             "sharing an output dir don't clobber each other's "
+                             "progress). Default: one per output dir, "
+                             "~/.ddc-progress/ocr_<outdir>[_g<i>].json")
     parser.add_argument("--words-per-page", "-w", type=int, default=300,
                         help="nominal words per page for text-based books "
                              "(txt/epub, which have no physical pages). Pages "
@@ -856,7 +888,8 @@ def main():
     # Sharded workers report on their own file (ocr_<out>_g<i>.json); the
     # dashboard groups by base name and sums the shards into one card.
     progress_path = progress_path_for(output_dir,
-                                      (shard_i, shard_n) if shard_n > 1 else None)
+                                      (shard_i, shard_n) if shard_n > 1 else None,
+                                      args.progress_file)
     # Which physical GPU is this worker pinned to? (The GUI pins each
     # worker via CUDA_VISIBLE_DEVICES; used to label the dashboard.)
     _cvis = os.environ.get("CUDA_VISIBLE_DEVICES", "")

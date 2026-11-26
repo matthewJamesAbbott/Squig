@@ -426,34 +426,52 @@ def task_progress(t: "Task"):
 
 
 def _task_progress_from_files(t: "Task"):
-    """Progress file for this task's index/ocr run (matched by --root /
-    --output), if the file exists and is not ancient. None otherwise.
+    """Progress file for this task's index/ocr run, if it exists, is not
+    ancient, and (while it claims to be running) its writer is alive.
+    None otherwise.
 
-    Sharded OCR workers carry `--shard i/N` in their cmd and write
-    ocr_<out>_g<i>.json — the row shows that worker's own shard."""
+    GUI runs carry an explicit `--progress-file` — unique per task, so
+    concurrent runs that share an output dir can't clobber each other's
+    progress (this is what used to show a sibling run's book names). Older
+    tasks fall back to the derived per-output-dir name; sharded OCR workers
+    carry `--shard i/N` and write ocr_<out>_g<i>.json — the row shows that
+    worker's own shard."""
     cmd = t.cmd
-    flag = "--root" if t.kind == "index" else "--output"
-    target = None
-    if flag in cmd:
-        i = cmd.index(flag)
+    f = None
+    if "--progress-file" in cmd:
+        i = cmd.index("--progress-file")
         if i + 1 < len(cmd):
-            target = cmd[i + 1]
-    if not target:
-        return None
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", Path(target).name).strip("_")
-    prefix = "index" if t.kind == "index" else "ocr"
-    fname = f"{prefix}_{slug or ('root' if prefix == 'index' else 'out')}.json"
-    if "--shard" in cmd:
-        si = cmd.index("--shard")
-        m = re.match(r"(\d+)/\d+", cmd[si + 1]) if si + 1 < len(cmd) else None
-        if m:
-            fname = re.sub(r"\.json$", f"_g{m.group(1)}.json", fname)
-    f = PROGRESS_DIR / fname
+            f = Path(cmd[i + 1])
+    if f is None:
+        flag = "--root" if t.kind == "index" else "--output"
+        target = None
+        if flag in cmd:
+            i = cmd.index(flag)
+            if i + 1 < len(cmd):
+                target = cmd[i + 1]
+        if not target:
+            return None
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", Path(target).name).strip("_")
+        prefix = "index" if t.kind == "index" else "ocr"
+        fname = f"{prefix}_{slug or ('root' if prefix == 'index' else 'out')}.json"
+        if "--shard" in cmd:
+            si = cmd.index("--shard")
+            m = re.match(r"(\d+)/\d+", cmd[si + 1]) if si + 1 < len(cmd) else None
+            if m:
+                fname = re.sub(r"\.json$", f"_g{m.group(1)}.json", fname)
+        f = PROGRESS_DIR / fname
     try:
         d = json.loads(f.read_text())
     except Exception:
         return None
     if (time.time() - (d.get("last_update") or 0)) > 600 and d.get("state") != "running":
+        return None
+    # state:'running' is only credible while the writer process is alive: a
+    # crash or reboot leaves the file 'running' forever (its pid is dead or
+    # was recycled), and without this check a task's row would show a dead
+    # sibling run's progress indefinitely.
+    script = "index_books.py" if t.kind == "index" else "ocr.py"
+    if d.get("state") == "running" and not _writer_alive(d.get("pid"), script):
         return None
     view = _progress_view(f, d, time.time())
     total = d.get("total_books") or d.get("total_files") or 0
@@ -563,10 +581,15 @@ def start_task(kind: str, params: dict):
         if not picked:
             raise ValueError("no GPUs available for this job")
         n_workers = len(picked)
-        # A job id ties the shard progress files together, so the dashboard
-        # can merge a sharded job (including shards that finish early) into
-        # one card without mixing in older, unrelated runs of the same dir.
-        job_id = uuid.uuid4().hex[:8] if n_workers > 1 else None
+        # A job id gives the whole run its own progress-file identity (the
+        # GUI passes --progress-file per task), so concurrent runs that
+        # share an output dir can't overwrite each other's progress — and
+        # the dashboard can merge a sharded job (including shards that
+        # finish early) into one card without mixing in older, unrelated
+        # runs of the same dir.
+        job_id = uuid.uuid4().hex[:8]
+        pslug = re.sub(r"[^A-Za-z0-9]+", "_", output_dir.name).strip("_") or "out"
+        pbase = str(PROGRESS_DIR / f"ocr_{pslug}__{job_id}")
         env_custom = {k: str(v).strip() for k, v in (params.get("env") or {}).items()
                       if str(v).strip()}
         for k, gpu in enumerate(picked):
@@ -579,6 +602,10 @@ def start_task(kind: str, params: dict):
                     "--words-per-page", str(int(params.get("words_per_page", 300)))]
             if n_workers > 1:
                 wcmd += ["--shard", f"{k}/{n_workers}", "--job", job_id]
+            # Shards keep the groupable _g<i> suffix; a single worker gets
+            # its own standalone file (base name unique to this job).
+            wcmd += ["--progress-file",
+                     f"{pbase}_g{k}.json" if n_workers > 1 else f"{pbase}.json"]
             if params.get("resume"):
                 wcmd.append("--resume")
             wenv = dict(gpu_env(gpu))
@@ -1159,19 +1186,35 @@ def _recent_rate(samples, window_s: float = 300.0):
     return None
 
 
+def _writer_alive(pid, script: str) -> bool:
+    """True if `pid` is alive AND plausibly the run that wrote the file.
+
+    os.kill(pid, 0) alone is not enough: PIDs get reused (and after a reboot
+    a recycled pid is even more likely to exist), which would keep a dead
+    run's state:'running' progress file looking live forever. So also check
+    the process's cmdline actually runs the expected script."""
+    if not pid:
+        return False
+    try:
+        pid = int(pid)
+        os.kill(pid, 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True  # non-Linux (or /proc unreadable): kill check is all we have
+    return script.encode() in cmdline
+
+
 def _progress_view(f: Path, d: dict, now: float) -> dict:
     """Normalize one progress file into the shape the UI wants, computing
     freshness (is the writer process alive?), pace and ETA."""
     last = float(d.get("last_update") or 0)
     age = max(0.0, now - last)
     pid = d.get("pid")
-    alive = False
-    if pid:
-        try:
-            os.kill(int(pid), 0)
-            alive = True
-        except (OSError, ValueError, TypeError):
-            alive = False
+    script = "index_books.py" if d.get("process") == "indexer" else "ocr.py"
+    alive = _writer_alive(pid, script)
     state = d.get("state") or "running"
     if state == "running" and not alive:
         state = "stalled"       # writer died without finishing
@@ -1387,9 +1430,27 @@ def pipeline_snapshot() -> dict:
     if PROGRESS_DIR.exists():
         for f in PROGRESS_DIR.glob("*.json"):
             try:
-                files[f.name] = json.loads(f.read_text())
+                d = json.loads(f.read_text())
             except Exception:
                 continue
+            # A crashed/rebooted writer leaves state:'running' behind, and
+            # 'running' never expires (it must not — a slow book is still
+            # running). Once the writer is provably dead (pid gone or
+            # recycled to another process) and the file is not fresh, mark
+            # it stopped in place so every reader — pipeline cards, task
+            # rows — stops treating it as a live run. Rewritten once.
+            if (d.get("state") == "running"
+                    and (now - (d.get("last_update") or 0)) > 600
+                    and not _writer_alive(d.get("pid"),
+                                          "index_books.py"
+                                          if d.get("process") == "indexer"
+                                          else "ocr.py")):
+                d["state"] = "stopped"
+                try:
+                    f.write_text(json.dumps(d, indent=1))
+                except OSError:
+                    pass
+            files[f.name] = d
 
     ocr_files = {n: d for n, d in files.items()
                  if n.startswith("ocr_") or d.get("process") == "ocr"}

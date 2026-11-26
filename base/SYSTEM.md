@@ -286,6 +286,17 @@ free V100 (`--device cuda:0` after unloading the squig LLM, or the incoming
     (a relative `--dest` poisoned the rewritten `image_path` values);
     missing dest root auto-created on execute.
   - `converters.py`: cbr `quick_page_count` via 7z separator lines.
+- **Dashboard task-identity fixes** (2026-11-26, `gui/app.py` + `ocr.py`):
+  concurrent OCR runs sharing an output dir (e.g. Fantasy on the P2000 and
+  Chemistry on a V100) used to overwrite one shared
+  `~/.ddc-progress/ocr_<out>.json`, so a task card showed its sibling's
+  book names/progress, and a dead run's `state: running` file stayed
+  "live" across reboots. Now: every GUI OCR run gets a unique
+  `--progress-file` (per job id), task rows + pipeline cards verify the
+  writer pid is alive *and* actually running the right script (PID reuse
+  safe), dead `running` files are auto-marked `stopped` after 10 min,
+  pipeline cards show `input → output`, and the shared base checkpoint
+  merges on save so concurrent runs can't drop each other's completions.
 - **Known tree state**: ~520 pre-existing books reference page images in
   deleted staging dirs (their text/parquet is fine; re-OCR repairs images);
   5 pre-existing duplicate identities (validator lists them).
